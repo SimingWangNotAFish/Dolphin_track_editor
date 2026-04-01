@@ -1,0 +1,1574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dolphin Track Editor</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap');
+
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --surface2: #1c2330;
+    --border: #2a3441;
+    --accent: #00d4aa;
+    --accent2: #ff6b35;
+    --accent3: #a78bfa;
+    --text: #e6edf3;
+    --text-muted: #7d8590;
+    --danger: #f85149;
+    --success: #3fb950;
+    --warn: #d29922;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  header h1 { font-size: 1.1rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent); }
+  header h1 span { color: var(--text-muted); font-weight: 400; }
+  .header-actions { display: flex; gap: 8px; align-items: center; }
+
+  .main-layout { display: flex; flex: 1; overflow: hidden; }
+
+  /* LEFT PANEL */
+  .left-panel {
+    width: 260px; min-width: 260px;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  .panel-section { padding: 12px; border-bottom: 1px solid var(--border); }
+  .panel-section h3 {
+    font-size: 0.65rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px;
+  }
+
+  .track-list { flex: 1; overflow-y: auto; padding: 8px; }
+  .track-list::-webkit-scrollbar { width: 4px; }
+  .track-list::-webkit-scrollbar-track { background: transparent; }
+  .track-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .track-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 8px; border-radius: 6px; cursor: pointer;
+    transition: background 0.15s; margin-bottom: 2px;
+    font-size: 0.8rem; font-family: 'JetBrains Mono', monospace;
+  }
+  .track-item:hover { background: var(--surface2); }
+  .track-item.selected { background: var(--surface2); outline: 1px solid var(--accent); }
+  .track-item.selected-merge { background: var(--surface2); outline: 1px solid var(--accent2); }
+
+  .track-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .track-label { flex: 1; color: var(--text); }
+  .track-count { color: var(--text-muted); font-size: 0.7rem; }
+
+  /* CENTER */
+  .center-panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+
+  .canvas-container {
+    flex: 1; position: relative; overflow: hidden;
+    background: #000; cursor: crosshair;
+  }
+
+  /* Native video element as background */
+  #bg-video {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    z-index: 1;
+    display: none;
+  }
+
+  #track-canvas {
+    position: absolute; top: 0; left: 0;
+    z-index: 2;
+  }
+
+  .frame-controls {
+    padding: 10px 16px; background: var(--surface);
+    border-top: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-shrink: 0;
+  }
+
+  .frame-info {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem; color: var(--accent); min-width: 140px;
+  }
+
+  input[type=range] {
+    flex: 1; -webkit-appearance: none;
+    height: 4px; background: var(--border);
+    border-radius: 2px; outline: none;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent); cursor: pointer;
+  }
+
+  /* RIGHT PANEL */
+  .right-panel {
+    width: 240px; min-width: 240px;
+    background: var(--surface); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow-y: auto; padding: 12px; gap: 12px;
+  }
+  .right-panel::-webkit-scrollbar { width: 4px; }
+  .right-panel::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* BUTTONS */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px; padding: 7px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface2);
+    color: var(--text); font-family: 'Syne', sans-serif;
+    font-size: 0.78rem; font-weight: 600; cursor: pointer;
+    transition: all 0.15s; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: #000; border-color: var(--accent); }
+  .btn.primary:hover { background: #00b894; }
+  .btn.danger { border-color: var(--danger); color: var(--danger); }
+  .btn.danger:hover { background: var(--danger); color: #fff; }
+  .btn.warn { border-color: var(--warn); color: var(--warn); }
+  .btn.warn:hover { background: var(--warn); color: #000; }
+  .btn.merge-active { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+  .btn.full { width: 100%; }
+
+  /* INPUTS */
+  input[type=text], input[type=number] {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem; padding: 6px 10px; border-radius: 6px;
+    width: 100%; outline: none; transition: border-color 0.15s;
+  }
+  input[type=text]:focus, input[type=number]:focus { border-color: var(--accent); }
+
+  label {
+    font-size: 0.7rem; color: var(--text-muted);
+    display: block; margin-bottom: 4px;
+    font-weight: 600; letter-spacing: 0.05em;
+  }
+
+  .field { margin-bottom: 8px; }
+
+  #status-bar {
+    padding: 5px 16px; background: var(--surface);
+    border-top: 1px solid var(--border);
+    font-size: 0.72rem; font-family: 'JetBrains Mono', monospace;
+    color: var(--text-muted); flex-shrink: 0;
+  }
+  #status-bar.ok { color: var(--success); }
+  #status-bar.err { color: var(--danger); }
+  #status-bar.info { color: var(--accent); }
+
+  .section-heading {
+    font-size: 0.65rem; font-weight: 700; letter-spacing: 0.12em;
+    text-transform: uppercase; color: var(--text-muted);
+    margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+
+  .selected-info {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px 10px;
+    font-family: 'JetBrains Mono', monospace; font-size: 0.75rem;
+  }
+  .selected-info .track-id { font-weight: 700; margin-bottom: 4px; }
+  .selected-info .detail { color: var(--text-muted); }
+  .selected-info .detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .coord-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .subtle-note {
+    font-size: 0.68rem;
+    color: var(--text-muted);
+    line-height: 1.45;
+  }
+
+  .color-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .swatch-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .swatch-btn {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    border: 2px solid transparent;
+    cursor: pointer;
+    transition: transform 0.12s, border-color 0.12s;
+  }
+
+  .swatch-btn:hover {
+    transform: scale(1.08);
+    border-color: #fff;
+  }
+
+  input[type=color] {
+    width: 44px;
+    height: 34px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    cursor: pointer;
+  }
+
+  .kbd {
+    display: inline-block; background: var(--surface2);
+    border: 1px solid var(--border); border-radius: 3px;
+    padding: 1px 5px; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem; color: var(--text-muted);
+  }
+
+  .hint { font-size: 0.7rem; color: var(--text-muted); line-height: 1.5; }
+  .divider { border: none; border-top: 1px solid var(--border); }
+
+  .checkbox-row { display: flex; align-items: center; gap: 8px; font-size: 0.78rem; cursor: pointer; }
+  .checkbox-row input { width: auto; }
+
+  .file-upload-area {
+    border: 1px dashed var(--border); border-radius: 8px;
+    padding: 10px; text-align: center; font-size: 0.75rem;
+    color: var(--text-muted); cursor: pointer;
+    transition: border-color 0.15s; position: relative;
+  }
+  .file-upload-area:hover { border-color: var(--accent); color: var(--accent); }
+  .file-upload-area input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  .badge {
+    display: inline-block; padding: 2px 6px; border-radius: 4px;
+    font-size: 0.65rem; font-family: 'JetBrains Mono', monospace; font-weight: 700;
+  }
+  .badge.ros { background: #0d4f3c; color: #00d4aa; }
+  .badge.dor { background: #3d1f0d; color: #ff6b35; }
+  .badge.other { background: #2d2557; color: #a78bfa; }
+
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    justify-content: center; height: 100%; gap: 12px;
+    color: var(--text-muted); font-size: 0.85rem;
+  }
+  .empty-state svg { opacity: 0.3; }
+
+  .tooltip {
+    position: fixed; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 10px; font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem; color: var(--text);
+    pointer-events: none; z-index: 1000; display: none; white-space: nowrap;
+  }
+
+  .merge-banner {
+    background: #3d1f0d; border: 1px solid var(--accent2);
+    border-radius: 6px; padding: 8px 10px;
+    font-size: 0.75rem; color: var(--accent2); display: none;
+  }
+  .merge-banner.visible { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐬 Dolphin Track Editor <span>/ annotation tool</span></h1>
+  <div class="header-actions">
+    <button class="btn" onclick="undoAction()">↩ Undo</button>
+    <button class="btn primary" onclick="exportCSV()">⬇ Export CSV</button>
+  </div>
+</header>
+
+<div class="main-layout">
+
+  <!-- LEFT: Track List -->
+  <div class="left-panel">
+    <div class="panel-section">
+      <h3>Tracks <span id="track-count-badge" style="color:var(--accent)"></span></h3>
+      <div style="display:flex;gap:4px;flex-wrap:wrap;">
+        <button class="btn" style="font-size:0.7rem;padding:4px 8px" onclick="filterTracks('all')">All</button>
+        <button class="btn" style="font-size:0.7rem;padding:4px 8px" onclick="filterTracks('ros')">ros</button>
+        <button class="btn" style="font-size:0.7rem;padding:4px 8px" onclick="filterTracks('dor')">dor</button>
+      </div>
+    </div>
+    <div class="track-list" id="track-list">
+      <div class="empty-state" style="height:200px"><p>Load a CSV to begin</p></div>
+    </div>
+  </div>
+
+  <!-- CENTER: Canvas -->
+  <div class="center-panel">
+    <div class="canvas-container" id="canvas-container">
+      <!-- Native browser video for zero-latency playback -->
+      <video id="bg-video" preload="auto" muted></video>
+      <canvas id="track-canvas"></canvas>
+      <div class="empty-state" id="empty-canvas">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <circle cx="8.5" cy="8.5" r="1.5"/>
+          <polyline points="21 15 16 10 5 21"/>
+        </svg>
+        <p>Load CSV and (optionally) MP4 video</p>
+        <p style="font-size:0.75rem">Use the panels on the right →</p>
+      </div>
+    </div>
+
+    <div class="frame-controls">
+      <span class="frame-info" id="frame-info">Frame: —</span>
+      <input type="range" id="frame-slider" min="0" max="100" value="0" oninput="onSliderInput(this.value)" onchange="onSliderCommit(this.value)">
+      <div style="display:flex;gap:4px">
+        <button class="btn" onclick="stepFrame(-10)" title="Back 10">«</button>
+        <button class="btn" onclick="stepFrame(-1)" title="Back 1">‹</button>
+        <button class="btn" onclick="stepFrame(1)" title="Forward 1">›</button>
+        <button class="btn" onclick="stepFrame(10)" title="Forward 10">»</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT: Controls -->
+  <div class="right-panel">
+
+    <div>
+      <div class="section-heading">Load Files</div>
+      <div class="file-upload-area" style="margin-bottom:8px">
+        📄 Load Tracklet CSV
+        <input type="file" accept=".csv,.tsv,.txt" onchange="loadCSV(this)">
+      </div>
+      <div class="file-upload-area">
+        🎥 Load MP4 Video (optional)
+        <input type="file" accept="video/*" onchange="loadVideo(this)">
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="section-heading">Display</div>
+      <div class="field">
+        <label>Trail length (frames)</label>
+        <input type="number" id="trail-length" value="30" min="1" max="200" oninput="redraw()">
+      </div>
+      <label class="checkbox-row">
+        <input type="checkbox" id="show-labels" checked onchange="redraw()"> Show track labels
+      </label><br>
+      <label class="checkbox-row">
+        <input type="checkbox" id="show-all-frames" onchange="redraw()"> Show all frames
+      </label>
+    </div>
+
+    <div>
+      <div class="section-heading">Video Sync</div>
+      <div class="field">
+        <label>Sync source</label>
+        <select id="video-sync-source" onchange="applyVideoSyncSettings()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:6px 10px;border-radius:6px;outline:none;">
+          <option value="frame_number">CSV frame_number</option>
+          <option value="frame_timestamp">CSV frame_timestamp</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Video FPS</label>
+        <input type="number" id="video-fps-input" value="25" min="0.1" step="0.01" onchange="applyVideoSyncSettings()">
+      </div>
+      <div class="field">
+        <label>Frame offset</label>
+        <input type="number" id="video-offset-input" value="0" step="1" onchange="applyVideoSyncSettings()">
+      </div>
+      <div style="display:flex;gap:4px">
+        <button class="btn full" onclick="setVideoFPS(30)">30 fps</button>
+        <button class="btn full" onclick="setVideoFPS(60)">60 fps</button>
+      </div>
+      <div style="display:flex;gap:4px;margin-top:4px">
+        <button class="btn full" onclick="nudgeVideoOffset(-1)">Offset -1</button>
+        <button class="btn full" onclick="nudgeVideoOffset(1)">Offset +1</button>
+      </div>
+      <div class="subtle-note" style="margin-top:6px">
+        Default sync uses the CSV `frame_number` as the actual video frame index. If your CSV includes `frame_timestamp`, you can switch to that instead.
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="section-heading">Selected Track</div>
+      <div class="selected-info" id="selected-info">
+        <div class="detail">Click a track to select</div>
+      </div>
+      <div class="field" style="margin-top:8px">
+        <label>Selected track colour</label>
+        <div class="color-row">
+          <input type="color" id="track-color-picker" value="#00d4aa" onchange="applyTrackColor(this.value)">
+          <input type="text" id="track-color-text" placeholder="#00d4aa" onkeydown="onTrackColorKeydown(event)">
+          <button class="btn" onclick="applyTrackColorFromText()">Set</button>
+        </div>
+        <div class="swatch-row" id="track-color-swatches"></div>
+      </div>
+    </div>
+
+    <div class="merge-banner" id="merge-banner">
+      🔗 Merge mode active<br>
+      <span style="font-size:0.7rem">Select a second track to merge into the first</span>
+    </div>
+
+    <div>
+      <div class="section-heading">Actions</div>
+
+      <div class="field">
+        <label>Edit point at current frame</label>
+        <div class="coord-grid" style="margin-bottom:6px">
+          <input type="number" id="point-x" step="any" placeholder="X">
+          <input type="number" id="point-y" step="any" placeholder="Y">
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="btn full" onclick="savePointEdit()">Apply XY</button>
+          <button class="btn" onclick="jumpToSelectedPoint()">Focus</button>
+        </div>
+        <div class="subtle-note" id="point-edit-note" style="margin-top:6px">
+          Select a track, then drag its current-frame point on the canvas or enter X/Y manually.
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Rename selected track</label>
+        <div style="display:flex;gap:4px">
+          <input type="text" id="rename-input" placeholder="new_id e.g. dor_001">
+          <button class="btn" onclick="renameTrack()">✓</button>
+        </div>
+      </div>
+      <div class="field">
+        <button class="btn full" id="merge-btn" onclick="toggleMergeMode()">🔗 Merge: Select 2 tracks</button>
+      </div>
+
+      <div class="field">
+        <label>Split at frame</label>
+        <div style="display:flex;gap:4px">
+          <input type="number" id="split-frame" placeholder="frame #">
+          <button class="btn warn" onclick="splitTrack()">✂</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <button class="btn danger full" onclick="deleteTrack()">🗑 Delete selected track</button>
+      </div>
+
+      <div class="field">
+        <button class="btn danger full" onclick="deletePoint()">✕ Delete point at current frame</button>
+      </div>
+
+      <div class="field">
+        <label>Delete all tracks in frame range</label>
+        <div class="coord-grid" style="margin-bottom:6px">
+          <input type="number" id="range-delete-start" placeholder="start frame">
+          <input type="number" id="range-delete-end" placeholder="end frame">
+        </div>
+        <button class="btn danger full" onclick="deleteFrameRange()">Delete coordinates for frames</button>
+        <div class="subtle-note" style="margin-top:6px">
+          Removes coordinates only between the two frames, inclusive. Tracks with no points left afterward are removed automatically.
+        </div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div>
+      <div class="section-heading">Shortcuts</div>
+      <div class="hint">
+        <kbd class="kbd">←</kbd><kbd class="kbd">→</kbd> prev/next frame<br>
+        <kbd class="kbd">Ctrl+Z</kbd> undo<br>
+        <kbd class="kbd">Esc</kbd> cancel merge
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="status-bar">Ready — load a CSV file to begin</div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════════
+// ALL STATE LIVES HERE IN THE BROWSER — zero server round-trips for edits
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Core data: array of point objects, mutated in-place by all edit operations
+let allData = [];
+let sourceColumnOrder = [];
+let resolvedColumns = {};
+
+// Derived index: global_id -> sorted array of points (rebuilt after each edit)
+let trackMap = {};
+
+// Precomputed per-frame index: frame_number -> array of points (rebuilt after edits)
+let frameIndex = {};
+
+// Data bounds for coordinate mapping when no video is loaded
+let dataBounds = { xmin: 0, xmax: 1, ymin: 0, ymax: 1 };
+
+// Track appearance
+let trackColors = {};
+let colorIdx = 0;
+const COLORS = [
+  '#00d4aa','#ff6b35','#a78bfa','#fbbf24','#34d399','#60a5fa',
+  '#f472b6','#fb7185','#4ade80','#38bdf8','#c084fc','#facc15',
+  '#2dd4bf','#f97316','#818cf8','#e879f9','#86efac','#93c5fd'
+];
+
+// UI state
+let selectedTrack = null;
+let mergeMode = false;
+let mergeSource = null;
+let filterMode = 'all';
+
+// Frame state
+let currentFrame = 0;
+let frameMin = 0, frameMax = 0;
+
+// Video state — browser handles video entirely
+let videoLoaded = false;
+let videoNativeW = 1, videoNativeH = 1;
+let videoFPS = 25;
+let videoFrameCount = 0;
+let videoFrameOffset = 0;
+let videoSyncSource = 'frame_number';
+let timestampByFrame = {};
+let timestampFrames = [];
+
+// Undo stack — stores deep copies of allData (up to 30)
+let undoStack = [];
+
+// Slider drag optimisation: throttle redraw while dragging
+let sliderDragging = false;
+let drawScheduled = false;
+let dragState = {
+  active: false,
+  point: null,
+  hasUndo: false,
+  moved: false,
+  suppressClick: false,
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// INDEX BUILDING — called once after load or after any edit
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function rebuildIndices() {
+  trackMap = {};
+  frameIndex = {};
+  timestampByFrame = {};
+  timestampFrames = [];
+
+  allData.forEach(d => {
+    // Track index
+    if (!trackMap[d.global_id]) trackMap[d.global_id] = [];
+    trackMap[d.global_id].push(d);
+
+    // Frame index
+    const f = d.frame_number;
+    if (!frameIndex[f]) frameIndex[f] = [];
+    frameIndex[f].push(d);
+
+    const timestampValue = getRecordTimestamp(d);
+    if (timestampValue !== null && timestampByFrame[f] === undefined) {
+      timestampByFrame[f] = timestampValue;
+    }
+
+    // Ensure color assigned
+    if (!trackColors[d.global_id]) {
+      trackColors[d.global_id] = COLORS[colorIdx % COLORS.length];
+      colorIdx++;
+    }
+  });
+
+  // Sort each track by frame
+  Object.keys(trackMap).forEach(id => {
+    trackMap[id].sort((a, b) => a.frame_number - b.frame_number);
+  });
+
+  timestampFrames = Object.keys(timestampByFrame)
+    .map(Number)
+    .sort((a, b) => a - b);
+
+  // Update data bounds
+  if (allData.length > 0) {
+    const xs = allData.map(d => d.X), ys = allData.map(d => d.Y);
+    dataBounds = {
+      xmin: Math.min(...xs), xmax: Math.max(...xs),
+      ymin: Math.min(...ys), ymax: Math.max(...ys)
+    };
+    frameMin = Math.min(...allData.map(d => d.frame_number));
+    frameMax = Math.max(...allData.map(d => d.frame_number));
+  } else {
+    frameMin = 0;
+    frameMax = 0;
+  }
+}
+
+function getRecordTimestamp(record) {
+  const raw = record.frame_timestamp ?? record.FrameTimestamp ?? record.timestamp ?? null;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const value = parseFloat(raw);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getNavigationBounds() {
+  if (videoLoaded && videoFrameCount > 0) {
+    return { min: 0, max: Math.max(0, videoFrameCount - 1) };
+  }
+  return { min: frameMin, max: frameMax };
+}
+
+function updateFrameSliderBounds() {
+  const slider = document.getElementById('frame-slider');
+  const bounds = getNavigationBounds();
+  slider.min = bounds.min;
+  slider.max = bounds.max;
+  currentFrame = Math.max(bounds.min, Math.min(bounds.max, currentFrame));
+  slider.value = currentFrame;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CSV LOADING — only server call for data: parse CSV, get back JSON
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function loadCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  setStatus('Parsing CSV...', 'info');
+  const fd = new FormData();
+  fd.append('csv_file', file);
+  fetch('/parse_csv', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(resp => {
+      if (resp.error) { setStatus('Error: ' + resp.error, 'err'); return; }
+      undoStack = [];
+      allData = resp.data;
+      sourceColumnOrder = resp.column_order || [];
+      resolvedColumns = resp.resolved_columns || {};
+      rebuildIndices();
+
+      if (!videoLoaded) {
+        currentFrame = frameMin;
+      }
+      updateFrameSliderBounds();
+      if (!document.getElementById('video-offset-input').dataset.userChanged) {
+        videoFrameOffset = 0;
+        document.getElementById('video-offset-input').value = 0;
+      }
+      document.getElementById('video-sync-source').value = timestampFrames.length > 0 ? videoSyncSource : 'frame_number';
+
+      document.getElementById('empty-canvas').style.display = 'none';
+      renderTrackList();
+      updateSelectedInfo();
+      redraw();
+      setStatus(`Loaded ${resp.n_rows} points across ${Object.keys(trackMap).length} tracks`, 'ok');
+    })
+    .catch(e => setStatus('Error: ' + e.message, 'err'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VIDEO LOADING — browser-native, no server involved
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function loadVideo(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const video = document.getElementById('bg-video');
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  video.style.display = 'block';
+
+  video.addEventListener('loadedmetadata', () => {
+    videoNativeW = video.videoWidth;
+    videoNativeH = video.videoHeight;
+    videoFPS = parseFloat(document.getElementById('video-fps-input').value) || 25;
+    videoFrameCount = Math.round(video.duration * videoFPS);
+    videoLoaded = true;
+    document.getElementById('empty-canvas').style.display = 'none';
+    document.getElementById('video-fps-input').value = videoFPS;
+    updateFrameSliderBounds();
+    seekVideoToFrame(currentFrame);
+    setStatus(`Video loaded: ${video.duration.toFixed(1)}s  ${videoNativeW}×${videoNativeH}`, 'ok');
+  }, { once: true });
+
+  video.addEventListener('seeked', () => {
+    // After seek completes, redraw tracks on top
+    drawTracks();
+  });
+}
+
+function getVideoFrameForTrackFrame(frameNum) {
+  return frameNum + videoFrameOffset;
+}
+
+function getTimestampForFrame(frameNum) {
+  if (timestampByFrame[frameNum] !== undefined) return timestampByFrame[frameNum];
+  if (timestampFrames.length === 0) return null;
+
+  let lo = 0;
+  let hi = timestampFrames.length - 1;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    const value = timestampFrames[mid];
+    if (value === frameNum) return timestampByFrame[value];
+    if (value < frameNum) lo = mid + 1;
+    else hi = mid - 1;
+  }
+
+  const prevFrame = hi >= 0 ? timestampFrames[hi] : null;
+  const nextFrame = lo < timestampFrames.length ? timestampFrames[lo] : null;
+  if (prevFrame === null && nextFrame === null) return null;
+  if (prevFrame === null) return timestampByFrame[nextFrame];
+  if (nextFrame === null) return timestampByFrame[prevFrame];
+  if (prevFrame === nextFrame) return timestampByFrame[prevFrame];
+
+  const prevTime = timestampByFrame[prevFrame];
+  const nextTime = timestampByFrame[nextFrame];
+  const alpha = (frameNum - prevFrame) / (nextFrame - prevFrame);
+  return prevTime + alpha * (nextTime - prevTime);
+}
+
+function seekVideoToFrame(frameNum) {
+  if (!videoLoaded) return;
+  const video = document.getElementById('bg-video');
+  const useTimestamp = videoSyncSource === 'frame_timestamp' && timestampFrames.length > 0;
+  const t = useTimestamp
+    ? Math.max(0, (getTimestampForFrame(frameNum) ?? 0) + (videoFrameOffset / videoFPS))
+    : Math.max(0, getVideoFrameForTrackFrame(frameNum)) / videoFPS;
+  if (Math.abs(video.currentTime - t) > 0.001) {
+    video.currentTime = t;
+    // drawTracks called from 'seeked' event
+  } else {
+    drawTracks();
+  }
+}
+
+function applyVideoSyncSettings() {
+  const nextFPS = parseFloat(document.getElementById('video-fps-input').value);
+  const nextOffset = parseInt(document.getElementById('video-offset-input').value, 10);
+  const nextSource = document.getElementById('video-sync-source').value;
+
+  if (!Number.isFinite(nextFPS) || nextFPS <= 0) {
+    setStatus('Enter a valid video FPS greater than 0', 'err');
+    return;
+  }
+  if (!Number.isFinite(nextOffset)) {
+    setStatus('Enter a valid integer frame offset', 'err');
+    return;
+  }
+
+  videoFPS = nextFPS;
+  videoFrameOffset = nextOffset;
+  videoSyncSource = nextSource === 'frame_timestamp' && timestampFrames.length > 0
+    ? 'frame_timestamp'
+    : 'frame_number';
+  document.getElementById('video-offset-input').dataset.userChanged = 'true';
+  document.getElementById('video-sync-source').value = videoSyncSource;
+  if (videoLoaded) {
+    videoFrameCount = Math.round(document.getElementById('bg-video').duration * videoFPS);
+    updateFrameSliderBounds();
+  }
+  redraw();
+  setStatus(`Video sync updated: ${videoSyncSource}, ${videoFPS.toFixed(2)} fps, offset ${videoFrameOffset}`, 'ok');
+}
+
+function nudgeVideoOffset(delta) {
+  const input = document.getElementById('video-offset-input');
+  const current = parseInt(input.value || '0', 10) || 0;
+  input.value = current + delta;
+  applyVideoSyncSettings();
+}
+
+function setVideoFPS(fps) {
+  document.getElementById('video-fps-input').value = fps;
+  applyVideoSyncSettings();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// COORDINATE MAPPING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function dataToCanvas(x, y) {
+  const canvas = document.getElementById('track-canvas');
+  const cw = canvas.width, ch = canvas.height;
+
+  if (videoLoaded) {
+    const scale = Math.min(cw / videoNativeW, ch / videoNativeH);
+    const ox = (cw - videoNativeW * scale) / 2;
+    const oy = (ch - videoNativeH * scale) / 2;
+    return [x * scale + ox, y * scale + oy];
+  } else {
+    const pad = 40;
+    const rx = dataBounds.xmax - dataBounds.xmin || 1;
+    const ry = dataBounds.ymax - dataBounds.ymin || 1;
+    const s = Math.min((cw - pad * 2) / rx, (ch - pad * 2) / ry);
+    return [(x - dataBounds.xmin) * s + pad, (y - dataBounds.ymin) * s + pad];
+  }
+}
+
+function canvasToData(cx, cy) {
+  const canvas = document.getElementById('track-canvas');
+  const cw = canvas.width, ch = canvas.height;
+
+  if (videoLoaded) {
+    const scale = Math.min(cw / videoNativeW, ch / videoNativeH);
+    const ox = (cw - videoNativeW * scale) / 2;
+    const oy = (ch - videoNativeH * scale) / 2;
+    return [(cx - ox) / scale, (cy - oy) / scale];
+  }
+
+  const pad = 40;
+  const rx = dataBounds.xmax - dataBounds.xmin || 1;
+  const ry = dataBounds.ymax - dataBounds.ymin || 1;
+  const s = Math.min((cw - pad * 2) / rx, (ch - pad * 2) / ry);
+  return [
+    (cx - pad) / s + dataBounds.xmin,
+    (cy - pad) / s + dataBounds.ymin,
+  ];
+}
+
+function getPointForTrackAtFrame(trackId, frameNum = currentFrame) {
+  if (!trackId || !trackMap[trackId]) return null;
+  return trackMap[trackId].find(p => p.frame_number === frameNum) || null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DRAWING — pure canvas, no server calls
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function resizeCanvases() {
+  const container = document.getElementById('canvas-container');
+  const canvas = document.getElementById('track-canvas');
+  canvas.width = container.clientWidth;
+  canvas.height = container.clientHeight;
+}
+
+function redraw() {
+  if (!videoLoaded) {
+    drawTracks();
+  } else {
+    seekVideoToFrame(currentFrame);
+    // drawTracks called from 'seeked' event — avoids drawing before frame is ready
+  }
+  updateFrameInfo();
+}
+
+function scheduleRedraw() {
+  if (!drawScheduled) {
+    drawScheduled = true;
+    requestAnimationFrame(() => {
+      drawScheduled = false;
+      drawTracks();
+      updateFrameInfo();
+    });
+  }
+}
+
+function drawTracks() {
+  const canvas = document.getElementById('track-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (allData.length === 0) return;
+
+  const trailLen = parseInt(document.getElementById('trail-length').value) || 30;
+  const showLabels = document.getElementById('show-labels').checked;
+  const showAll = document.getElementById('show-all-frames').checked;
+
+  const ids = Object.keys(trackMap);
+
+  ids.forEach(id => {
+    const pts = trackMap[id];
+    const color = trackColors[id] || '#888';
+    const isSelected = id === selectedTrack;
+    const isMergeSrc = id === mergeSource;
+
+    // Compute visible trail efficiently using sorted array
+    let visible;
+    if (showAll) {
+      visible = pts;
+    } else {
+      // Binary search for start of trail window
+      const lo = currentFrame - trailLen;
+      const hi = currentFrame;
+      visible = pts.filter(p => p.frame_number >= lo && p.frame_number <= hi);
+    }
+    if (visible.length === 0) return;
+
+    // Trail line
+    ctx.beginPath();
+    ctx.strokeStyle = isSelected ? '#fff' : color;
+    ctx.lineWidth = isSelected ? 2.5 : 1.2;
+    ctx.globalAlpha = isSelected ? 1.0 : 0.55;
+    visible.forEach((p, i) => {
+      const [cx, cy] = dataToCanvas(p.X, p.Y);
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    });
+    ctx.stroke();
+
+    // Dots
+    visible.forEach(p => {
+      const [cx, cy] = dataToCanvas(p.X, p.Y);
+      const isCurFrame = p.frame_number === currentFrame;
+      const r = isCurFrame ? (isSelected ? 7 : 5) : (isSelected ? 4 : 3);
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = isMergeSrc ? '#ff6b35' : (isSelected ? '#fff' : color);
+      ctx.globalAlpha = isCurFrame ? 1.0 : 0.6;
+      ctx.fill();
+      if (isSelected || isCurFrame) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 1;
+        ctx.stroke();
+      }
+    });
+
+    const currentPt = pts.find(p => p.frame_number === currentFrame);
+    if (isSelected && currentPt) {
+      const [sx, sy] = dataToCanvas(currentPt.X, currentPt.Y);
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx - 10, sy);
+      ctx.lineTo(sx + 10, sy);
+      ctx.moveTo(sx, sy - 10);
+      ctx.lineTo(sx, sy + 10);
+      ctx.stroke();
+    }
+
+    // Label
+    if (showLabels) {
+      const labelPt = visible.find(p => p.frame_number === currentFrame) || visible[visible.length - 1];
+      if (labelPt) {
+        const [lx, ly] = dataToCanvas(labelPt.X, labelPt.Y);
+        ctx.globalAlpha = 1;
+        ctx.font = `${isSelected ? 'bold ' : ''}11px JetBrains Mono, monospace`;
+        ctx.fillStyle = color;
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 3;
+        ctx.strokeText(id, lx + 8, ly - 4);
+        ctx.fillText(id, lx + 8, ly - 4);
+      }
+    }
+    ctx.globalAlpha = 1;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FRAME NAVIGATION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// While dragging: update frame counter and tracks but throttle video seeks
+function onSliderInput(val) {
+  currentFrame = parseInt(val);
+  sliderDragging = true;
+  updateFrameInfo();
+  // Draw tracks immediately (no video seek yet — too expensive mid-drag)
+  if (!videoLoaded) {
+    scheduleRedraw();
+  } else {
+    scheduleRedraw(); // draw tracks over last video frame
+  }
+}
+
+// On release: do the proper seek
+function onSliderCommit(val) {
+  currentFrame = parseInt(val);
+  sliderDragging = false;
+  redraw();
+}
+
+function stepFrame(delta) {
+  const bounds = getNavigationBounds();
+  currentFrame = Math.max(bounds.min, Math.min(bounds.max, currentFrame + delta));
+  document.getElementById('frame-slider').value = currentFrame;
+  redraw();
+}
+
+function updateFrameInfo() {
+  const pts = frameIndex[currentFrame] || [];
+  let videoFrameText = '';
+  if (videoLoaded) {
+    if (videoSyncSource === 'frame_timestamp' && timestampFrames.length > 0) {
+      const ts = getTimestampForFrame(currentFrame);
+      videoFrameText = ts === null ? '  Video: n/a' : `  Time: ${ts.toFixed(3)}s`;
+    } else {
+      videoFrameText = `  Video: ${Math.max(0, Math.round(getVideoFrameForTrackFrame(currentFrame)))}`;
+    }
+  }
+  document.getElementById('frame-info').textContent =
+    `Frame: ${currentFrame}  (${pts.length} pts)${videoFrameText}`;
+  document.getElementById('split-frame').value = currentFrame;
+  const rangeStart = document.getElementById('range-delete-start');
+  const rangeEnd = document.getElementById('range-delete-end');
+  if (!rangeStart.value) rangeStart.value = currentFrame;
+  if (!rangeEnd.value) rangeEnd.value = currentFrame;
+  updateSelectedInfo();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// TRACK LIST
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function filterTracks(mode) {
+  filterMode = mode;
+  renderTrackList();
+}
+
+function renderTrackList() {
+  const list = document.getElementById('track-list');
+  const ids = Object.keys(trackMap)
+    .filter(id => filterMode === 'all' || id.toLowerCase().includes(filterMode))
+    .sort();
+
+  document.getElementById('track-count-badge').textContent = `(${ids.length})`;
+
+  if (ids.length === 0) {
+    list.innerHTML = '<div class="empty-state" style="height:100px"><p>No tracks</p></div>';
+    return;
+  }
+
+  list.innerHTML = ids.map(id => {
+    const pts = trackMap[id] || [];
+    const cls = id === mergeSource ? 'selected-merge' : (id === selectedTrack ? 'selected' : '');
+    const badge = id.startsWith('ros') ? '<span class="badge ros">ros</span>'
+                : id.startsWith('dor') ? '<span class="badge dor">dor</span>'
+                : '<span class="badge other">?</span>';
+    return `<div class="track-item ${cls}" onclick="selectTrack('${id}')">
+      <div class="track-dot" style="background:${trackColors[id] || '#888'}"></div>
+      <span class="track-label">${id}</span>
+      ${badge}
+      <span class="track-count">${pts.length}</span>
+    </div>`;
+  }).join('');
+}
+
+function renderColorSwatches() {
+  const container = document.getElementById('track-color-swatches');
+  container.innerHTML = COLORS.slice(0, 10).map(color =>
+    `<button class="swatch-btn" title="${color}" style="background:${color}" onclick="applyTrackColor('${color}')"></button>`
+  ).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SELECTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function selectTrack(id) {
+  if (mergeMode) {
+    if (!mergeSource) {
+      mergeSource = id;
+      selectedTrack = id;
+      setStatus(`Merge: "${id}" selected as source. Now click the target.`, 'info');
+      renderTrackList();
+    } else if (id !== mergeSource) {
+      executeMerge(mergeSource, id);
+    }
+    return;
+  }
+  selectedTrack = id;
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+}
+
+function updateSelectedInfo() {
+  const el = document.getElementById('selected-info');
+  const note = document.getElementById('point-edit-note');
+  const pointX = document.getElementById('point-x');
+  const pointY = document.getElementById('point-y');
+  const colorPicker = document.getElementById('track-color-picker');
+  const colorText = document.getElementById('track-color-text');
+  if (!selectedTrack || !trackMap[selectedTrack]) {
+    el.innerHTML = '<div class="detail">Click a track to select</div>';
+    pointX.value = '';
+    pointY.value = '';
+    colorPicker.value = '#00d4aa';
+    colorText.value = '';
+    note.textContent = 'Select a track, then drag its current-frame point on the canvas or enter X/Y manually.';
+    return;
+  }
+  const pts = trackMap[selectedTrack];
+  const frames = pts.map(p => p.frame_number);
+  const fmin = Math.min(...frames), fmax = Math.max(...frames);
+  const currentPoint = getPointForTrackAtFrame(selectedTrack, currentFrame);
+  const currentColor = trackColors[selectedTrack] || '#00d4aa';
+  el.innerHTML = `
+    <div class="track-id" style="color:${trackColors[selectedTrack]}">${selectedTrack}</div>
+    <div class="detail">${pts.length} points</div>
+    <div class="detail">Frames ${fmin} – ${fmax}</div>
+    <div class="detail">${currentPoint ? `Current point: (${Number(currentPoint.X).toFixed(2)}, ${Number(currentPoint.Y).toFixed(2)})` : 'No point at current frame'}</div>
+    <div class="detail-row">
+      <span class="detail">Current colour</span>
+      <span style="display:inline-flex;align-items:center;gap:6px;color:${currentColor}">
+        <span style="width:12px;height:12px;border-radius:50%;background:${currentColor};border:1px solid rgba(255,255,255,0.35)"></span>
+        ${currentColor}
+      </span>
+    </div>
+  `;
+  document.getElementById('rename-input').value = selectedTrack;
+  colorPicker.value = currentColor;
+  colorText.value = currentColor;
+  if (currentPoint) {
+    pointX.value = Number(currentPoint.X).toFixed(3);
+    pointY.value = Number(currentPoint.Y).toFixed(3);
+    note.textContent = 'Drag the highlighted point on the canvas, or edit the X/Y values and press Apply XY.';
+  } else {
+    pointX.value = '';
+    pointY.value = '';
+    note.textContent = 'This track has no point at the current frame. Move to a frame where the track exists to edit coordinates.';
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UNDO — client-side, instant
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function pushUndo() {
+  undoStack.push(JSON.parse(JSON.stringify(allData)));
+  if (undoStack.length > 30) undoStack.shift();
+}
+
+function undoAction() {
+  if (undoStack.length === 0) { setStatus('Nothing to undo', 'err'); return; }
+  allData = undoStack.pop();
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  redraw();
+  setStatus('Undone', 'ok');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EDIT ACTIONS — all run instantly in memory, no server calls
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function renameTrack() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  const newId = document.getElementById('rename-input').value.trim();
+  if (!newId) { setStatus('Enter a new track ID', 'err'); return; }
+  if (newId === selectedTrack) { setStatus('ID unchanged', ''); return; }
+  pushUndo();
+
+  // Preserve color
+  trackColors[newId] = trackColors[selectedTrack];
+
+  allData.forEach(d => {
+    if (d.global_id === selectedTrack) {
+      d.global_id = newId;
+      d.correction_flag = 'renamed';
+    }
+  });
+
+  const old = selectedTrack;
+  selectedTrack = newId;
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Renamed "${old}" → "${newId}"`, 'ok');
+}
+
+function normalizeHexColor(value) {
+  const raw = (value || '').trim();
+  const withHash = raw.startsWith('#') ? raw : `#${raw}`;
+  return /^#[0-9a-fA-F]{6}$/.test(withHash) ? withHash.toLowerCase() : null;
+}
+
+function applyTrackColor(color) {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  const normalized = normalizeHexColor(color);
+  if (!normalized) { setStatus('Enter a valid 6-digit hex colour', 'err'); return; }
+  trackColors[selectedTrack] = normalized;
+  document.getElementById('track-color-picker').value = normalized;
+  document.getElementById('track-color-text').value = normalized;
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Updated colour for "${selectedTrack}"`, 'ok');
+}
+
+function applyTrackColorFromText() {
+  applyTrackColor(document.getElementById('track-color-text').value);
+}
+
+function onTrackColorKeydown(event) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    applyTrackColorFromText();
+  }
+}
+
+function toggleMergeMode() {
+  mergeMode = !mergeMode;
+  mergeSource = null;
+  const btn = document.getElementById('merge-btn');
+  const banner = document.getElementById('merge-banner');
+  if (mergeMode) {
+    btn.classList.add('merge-active');
+    btn.textContent = '✕ Cancel Merge';
+    banner.classList.add('visible');
+    setStatus('Merge mode: click source track, then target track', 'info');
+  } else {
+    btn.classList.remove('merge-active');
+    btn.textContent = '🔗 Merge: Select 2 tracks';
+    banner.classList.remove('visible');
+    setStatus('Merge cancelled', '');
+  }
+  renderTrackList();
+}
+
+function executeMerge(sourceId, targetId) {
+  pushUndo();
+
+  allData.forEach(d => {
+    if (d.global_id === sourceId) {
+      d.global_id = targetId;
+      d.correction_flag = 'merged';
+    }
+  });
+
+  mergeMode = false; mergeSource = null;
+  selectedTrack = targetId;
+  document.getElementById('merge-btn').classList.remove('merge-active');
+  document.getElementById('merge-btn').textContent = '🔗 Merge: Select 2 tracks';
+  document.getElementById('merge-banner').classList.remove('visible');
+
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Merged "${sourceId}" → "${targetId}"`, 'ok');
+}
+
+function splitTrack() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  const splitFrame = parseInt(document.getElementById('split-frame').value);
+  if (isNaN(splitFrame)) { setStatus('Enter a frame number to split at', 'err'); return; }
+  const pts = trackMap[selectedTrack] || [];
+  const hasBefore = pts.some(d => d.frame_number < splitFrame);
+  const hasAfter = pts.some(d => d.frame_number >= splitFrame);
+  if (!hasBefore || !hasAfter) {
+    setStatus('Split frame must fall inside the selected track', 'err');
+    return;
+  }
+
+  const originalId = selectedTrack;
+  let suffix = 2;
+  let newId = `${selectedTrack}_b`;
+  while (trackMap[newId]) {
+    newId = `${selectedTrack}_b${suffix}`;
+    suffix++;
+  }
+  pushUndo();
+
+  allData.forEach(d => {
+    if (d.global_id === selectedTrack && d.frame_number >= splitFrame) {
+      d.global_id = newId;
+      d.correction_flag = 'split';
+    }
+  });
+
+  rebuildIndices();
+  renderTrackList();
+  selectedTrack = currentFrame >= splitFrame ? newId : selectedTrack;
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Split "${originalId}" at frame ${splitFrame} → "${newId}"`, 'ok');
+}
+
+function deleteTrack() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  if (!confirm(`Delete entire track "${selectedTrack}"?`)) return;
+  pushUndo();
+
+  allData = allData.filter(d => d.global_id !== selectedTrack);
+  const old = selectedTrack;
+  selectedTrack = null;
+
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Deleted track "${old}"`, 'ok');
+}
+
+function deletePoint() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  pushUndo();
+
+  allData = allData.filter(d => !(d.global_id === selectedTrack && d.frame_number === currentFrame));
+
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Deleted point of "${selectedTrack}" at frame ${currentFrame}`, 'ok');
+}
+
+function deleteFrameRange() {
+  if (allData.length === 0) { setStatus('Load data first', 'err'); return; }
+  let startFrame = parseInt(document.getElementById('range-delete-start').value, 10);
+  let endFrame = parseInt(document.getElementById('range-delete-end').value, 10);
+
+  if (Number.isNaN(startFrame) || Number.isNaN(endFrame)) {
+    setStatus('Enter both start and end frames', 'err');
+    return;
+  }
+
+  if (startFrame > endFrame) {
+    [startFrame, endFrame] = [endFrame, startFrame];
+  }
+
+  const pointsToDelete = allData.filter(d => d.frame_number >= startFrame && d.frame_number <= endFrame);
+  if (pointsToDelete.length === 0) {
+    setStatus(`No coordinates found between frames ${startFrame} and ${endFrame}`, 'err');
+    return;
+  }
+
+  if (!confirm(`Delete ${pointsToDelete.length} coordinates across all tracks for frames ${startFrame} to ${endFrame}?`)) {
+    return;
+  }
+
+  pushUndo();
+  allData = allData.filter(d => d.frame_number < startFrame || d.frame_number > endFrame);
+
+  rebuildIndices();
+  if (selectedTrack && !trackMap[selectedTrack]) {
+    selectedTrack = null;
+  }
+  renderTrackList();
+  updateSelectedInfo();
+  redraw();
+  setStatus(`Deleted ${pointsToDelete.length} coordinates for frames ${startFrame} to ${endFrame}`, 'ok');
+}
+
+function updatePointCoordinates(point, x, y, flag = 'edited') {
+  point.X = x;
+  point.Y = y;
+  point.correction_flag = flag;
+  const xCol = resolvedColumns.X || 'X';
+  const yCol = resolvedColumns.Y || 'Y';
+  point[xCol] = x;
+  point[yCol] = y;
+}
+
+function savePointEdit() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  const point = getPointForTrackAtFrame(selectedTrack, currentFrame);
+  if (!point) { setStatus('No selected-track point exists at this frame', 'err'); return; }
+
+  const x = parseFloat(document.getElementById('point-x').value);
+  const y = parseFloat(document.getElementById('point-y').value);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    setStatus('Enter valid numeric X and Y values', 'err');
+    return;
+  }
+
+  pushUndo();
+  updatePointCoordinates(point, x, y);
+  rebuildIndices();
+  updateSelectedInfo();
+  drawTracks();
+  setStatus(`Updated "${selectedTrack}" at frame ${currentFrame}`, 'ok');
+}
+
+function jumpToSelectedPoint() {
+  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
+  const point = getPointForTrackAtFrame(selectedTrack, currentFrame);
+  if (!point) { setStatus('No point to focus on at this frame', 'err'); return; }
+  setStatus(`Point "${selectedTrack}" at frame ${currentFrame}: x=${Number(point.X).toFixed(2)} y=${Number(point.Y).toFixed(2)}`, 'info');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// EXPORT — send corrected data to server, get CSV back
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function exportCSV() {
+  if (allData.length === 0) { setStatus('No data to export', 'err'); return; }
+  fetch('/export_csv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      data: allData,
+      column_order: sourceColumnOrder,
+      resolved_columns: resolvedColumns,
+    })
+  })
+  .then(r => r.blob())
+  .then(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'corrected_tracks.csv';
+    a.click();
+    setStatus('CSV exported', 'ok');
+  })
+  .catch(e => setStatus('Export error: ' + e.message, 'err'));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CANVAS INTERACTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const trackCanvas = document.getElementById('track-canvas');
+
+function pointNearCursor(mx, my, frameWindow = 5, threshold = 20, trackId = null) {
+  const nearby = [];
+  for (let f = currentFrame - frameWindow; f <= currentFrame + frameWindow; f++) {
+    if (frameIndex[f]) nearby.push(...frameIndex[f]);
+  }
+
+  let best = null, bestDist = threshold;
+  nearby.forEach(d => {
+    if (trackId && d.global_id !== trackId) return;
+    const [cx, cy] = dataToCanvas(d.X, d.Y);
+    const dist = Math.hypot(cx - mx, cy - my);
+    if (dist < bestDist) { bestDist = dist; best = d; }
+  });
+  return best;
+}
+
+trackCanvas.addEventListener('mousedown', function(e) {
+  if (!selectedTrack || allData.length === 0) return;
+  const rect = this.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const point = pointNearCursor(mx, my, 0, 16, selectedTrack);
+  if (!point || point.frame_number !== currentFrame) return;
+
+  dragState.active = true;
+  dragState.point = point;
+  dragState.hasUndo = false;
+  dragState.moved = false;
+});
+
+window.addEventListener('mouseup', () => {
+  if (!dragState.active) return;
+  dragState.active = false;
+  if (dragState.moved) {
+    rebuildIndices();
+    updateSelectedInfo();
+    drawTracks();
+    setStatus(`Dragged "${selectedTrack}" point at frame ${currentFrame}`, 'ok');
+    dragState.suppressClick = true;
+  }
+  dragState.point = null;
+  dragState.hasUndo = false;
+  dragState.moved = false;
+});
+
+trackCanvas.addEventListener('click', function(e) {
+  if (allData.length === 0) return;
+  if (dragState.suppressClick) {
+    dragState.suppressClick = false;
+    return;
+  }
+  const rect = this.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const best = pointNearCursor(mx, my);
+  if (best) selectTrack(best.global_id);
+});
+
+// Tooltip — uses frameIndex for O(1) lookup
+trackCanvas.addEventListener('mousemove', function(e) {
+  if (allData.length === 0) return;
+  const rect = this.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const tooltip = document.getElementById('tooltip');
+
+  if (dragState.active && dragState.point) {
+    const [x, y] = canvasToData(mx, my);
+    if (!dragState.hasUndo) {
+      pushUndo();
+      dragState.hasUndo = true;
+    }
+    updatePointCoordinates(dragState.point, x, y, 'dragged');
+    dragState.moved = true;
+    updateSelectedInfo();
+    drawTracks();
+    tooltip.style.display = 'none';
+    return;
+  }
+
+  const best = pointNearCursor(mx, my, 5, 15);
+
+  if (best) {
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 12) + 'px';
+    tooltip.style.top = (e.clientY - 8) + 'px';
+    tooltip.innerHTML = `<span style="color:${trackColors[best.global_id]}">${best.global_id}</span>`;
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+trackCanvas.addEventListener('mouseleave', () => {
+  document.getElementById('tooltip').style.display = 'none';
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// KEYBOARD
+// ═══════════════════════════════════════════════════════════════════════════════
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'ArrowLeft') stepFrame(-1);
+  if (e.key === 'ArrowRight') stepFrame(1);
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undoAction(); }
+  if (e.key === 'Escape' && mergeMode) toggleMergeMode();
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATUS / RESIZE / INIT
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function setStatus(msg, type) {
+  const el = document.getElementById('status-bar');
+  el.textContent = msg;
+  el.className = type || '';
+}
+
+window.addEventListener('resize', () => { resizeCanvases(); redraw(); });
+resizeCanvases();
+renderColorSwatches();
+</script>
+</body>
+</html>
