@@ -352,6 +352,24 @@
 
     <div class="frame-controls">
       <span class="frame-info" id="frame-info">Frame: —</span>
+      <div style="display:flex;gap:4px">
+        <button class="btn" id="play-btn" onclick="togglePlayback()">Play</button>
+        <select id="playback-speed" onchange="setPlaybackSpeed(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:7px 10px;border-radius:6px;outline:none;">
+          <option value="0.1">0.1x</option>
+          <option value="0.2">0.2x</option>
+          <option value="0.3">0.3x</option>
+          <option value="0.4">0.4x</option>
+          <option value="0.5">0.5x</option>
+          <option value="0.6">0.6x</option>
+          <option value="0.7">0.7x</option>
+          <option value="0.8">0.8x</option>
+          <option value="0.9">0.9x</option>
+          <option value="1" selected>1x</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2x</option>
+        </select>
+      </div>
       <input type="range" id="frame-slider" min="0" max="100" value="0" oninput="onSliderInput(this.value)" onchange="onSliderCommit(this.value)">
       <div style="display:flex;gap:4px">
         <button class="btn" onclick="stepFrame(-10)" title="Back 10">«</button>
@@ -409,14 +427,6 @@
       <div class="field">
         <label>Frame offset</label>
         <input type="number" id="video-offset-input" value="0" step="1" onchange="applyVideoSyncSettings()">
-      </div>
-      <div style="display:flex;gap:4px">
-        <button class="btn full" onclick="setVideoFPS(30)">30 fps</button>
-        <button class="btn full" onclick="setVideoFPS(60)">60 fps</button>
-      </div>
-      <div style="display:flex;gap:4px;margin-top:4px">
-        <button class="btn full" onclick="nudgeVideoOffset(-1)">Offset -1</button>
-        <button class="btn full" onclick="nudgeVideoOffset(1)">Offset +1</button>
       </div>
       <div class="subtle-note" style="margin-top:6px">
         Default sync uses the CSV `frame_number` as the actual video frame index. If your CSV includes `frame_timestamp`, you can switch to that instead.
@@ -568,6 +578,7 @@ let videoFrameOffset = 0;
 let videoSyncSource = 'frame_number';
 let timestampByFrame = {};
 let timestampFrames = [];
+let playbackRAF = null;
 
 // Undo stack — stores deep copies of allData (up to 30)
 let undoStack = [];
@@ -730,6 +741,24 @@ function loadVideo(input) {
     // After seek completes, redraw tracks on top
     drawTracks();
   });
+  video.addEventListener('play', () => {
+    stopPlaybackLoop();
+    updatePlaybackButton();
+    playbackTick();
+    setStatus('Playing video', 'info');
+  });
+  video.addEventListener('pause', () => {
+    stopPlaybackLoop();
+    updatePlaybackButton();
+    syncFrameFromVideo();
+    setStatus('Video paused', 'info');
+  });
+  video.addEventListener('ended', () => {
+    stopPlaybackLoop();
+    updatePlaybackButton();
+    syncFrameFromVideo();
+    setStatus('Video ended', 'info');
+  });
 }
 
 function getVideoFrameForTrackFrame(frameNum) {
@@ -761,6 +790,65 @@ function getTimestampForFrame(frameNum) {
   const nextTime = timestampByFrame[nextFrame];
   const alpha = (frameNum - prevFrame) / (nextFrame - prevFrame);
   return prevTime + alpha * (nextTime - prevTime);
+}
+
+function getTrackFrameForVideoTime(timeSeconds) {
+  if (videoSyncSource === 'frame_timestamp' && timestampFrames.length > 0) {
+    const adjustedTime = timeSeconds - (videoFrameOffset / videoFPS);
+    if (timestampFrames.length === 1) return timestampFrames[0];
+
+    let lo = 0;
+    let hi = timestampFrames.length - 1;
+    while (lo <= hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const midFrame = timestampFrames[mid];
+      const midTime = timestampByFrame[midFrame];
+      if (midTime === adjustedTime) return midFrame;
+      if (midTime < adjustedTime) lo = mid + 1;
+      else hi = mid - 1;
+    }
+
+    const prevFrame = hi >= 0 ? timestampFrames[hi] : timestampFrames[0];
+    const nextFrame = lo < timestampFrames.length ? timestampFrames[lo] : timestampFrames[timestampFrames.length - 1];
+    if (prevFrame === nextFrame) return prevFrame;
+
+    const prevTime = timestampByFrame[prevFrame];
+    const nextTime = timestampByFrame[nextFrame];
+    if (nextTime === prevTime) return prevFrame;
+
+    const alpha = (adjustedTime - prevTime) / (nextTime - prevTime);
+    return Math.round(prevFrame + alpha * (nextFrame - prevFrame));
+  }
+
+  return Math.round(timeSeconds * videoFPS) - videoFrameOffset;
+}
+
+function syncFrameFromVideo() {
+  if (!videoLoaded) return;
+  const video = document.getElementById('bg-video');
+  const bounds = getNavigationBounds();
+  currentFrame = Math.max(bounds.min, Math.min(bounds.max, getTrackFrameForVideoTime(video.currentTime)));
+  document.getElementById('frame-slider').value = currentFrame;
+  updateFrameInfo();
+  drawTracks();
+}
+
+function stopPlaybackLoop() {
+  if (playbackRAF !== null) {
+    cancelAnimationFrame(playbackRAF);
+    playbackRAF = null;
+  }
+}
+
+function playbackTick() {
+  if (!videoLoaded) return;
+  const video = document.getElementById('bg-video');
+  syncFrameFromVideo();
+  if (!video.paused && !video.ended) {
+    playbackRAF = requestAnimationFrame(playbackTick);
+  } else {
+    playbackRAF = null;
+  }
 }
 
 function seekVideoToFrame(frameNum) {
@@ -807,16 +895,47 @@ function applyVideoSyncSettings() {
   setStatus(`Video sync updated: ${videoSyncSource}, ${videoFPS.toFixed(2)} fps, offset ${videoFrameOffset}`, 'ok');
 }
 
-function nudgeVideoOffset(delta) {
-  const input = document.getElementById('video-offset-input');
-  const current = parseInt(input.value || '0', 10) || 0;
-  input.value = current + delta;
-  applyVideoSyncSettings();
+function updatePlaybackButton() {
+  const btn = document.getElementById('play-btn');
+  if (!btn) return;
+  btn.textContent = 'Play';
 }
 
-function setVideoFPS(fps) {
-  document.getElementById('video-fps-input').value = fps;
-  applyVideoSyncSettings();
+function setPlaybackSpeed(value) {
+  const speed = parseFloat(value);
+  if (!Number.isFinite(speed) || speed < 0.1 || speed > 2) {
+    setStatus('Playback speed must be between 0.1x and 2x', 'err');
+    return;
+  }
+
+  document.getElementById('playback-speed').value = String(speed);
+  if (videoLoaded) {
+    document.getElementById('bg-video').playbackRate = speed;
+  }
+  setStatus(`Playback speed set to ${speed}x`, 'ok');
+}
+
+function playVideo() {
+  if (!videoLoaded) { setStatus('Load an MP4 video first', 'err'); return; }
+  const video = document.getElementById('bg-video');
+  seekVideoToFrame(currentFrame);
+  video.playbackRate = parseFloat(document.getElementById('playback-speed').value) || 1;
+  video.play().catch(err => setStatus('Play error: ' + err.message, 'err'));
+}
+
+function pauseVideo() {
+  if (!videoLoaded) { setStatus('Load an MP4 video first', 'err'); return; }
+  document.getElementById('bg-video').pause();
+}
+
+function togglePlayback() {
+  if (!videoLoaded) { setStatus('Load an MP4 video first', 'err'); return; }
+  const video = document.getElementById('bg-video');
+  if (video.paused || video.ended) {
+    playVideo();
+  } else {
+    pauseVideo();
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -996,6 +1115,7 @@ function drawTracks() {
 
 // While dragging: update frame counter and tracks but throttle video seeks
 function onSliderInput(val) {
+  if (videoLoaded) pauseVideo();
   currentFrame = parseInt(val);
   sliderDragging = true;
   updateFrameInfo();
@@ -1549,9 +1669,13 @@ trackCanvas.addEventListener('mouseleave', () => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 document.addEventListener('keydown', e => {
-  if (e.target.tagName === 'INPUT') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.key === 'ArrowLeft') stepFrame(-1);
   if (e.key === 'ArrowRight') stepFrame(1);
+  if (e.code === 'Space') {
+    e.preventDefault();
+    togglePlayback();
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undoAction(); }
   if (e.key === 'Escape' && mergeMode) toggleMergeMode();
 });
