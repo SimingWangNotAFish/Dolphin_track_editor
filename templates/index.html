@@ -456,6 +456,13 @@
         <div class="detail">Click a track to select</div>
       </div>
       <div class="field" style="margin-top:8px">
+        <label>Rename selected track</label>
+        <div style="display:flex;gap:4px">
+          <input type="text" id="rename-input" placeholder="new_id e.g. dor_001">
+          <button class="btn" onclick="renameTrack()">✓</button>
+        </div>
+      </div>
+      <div class="field" style="margin-top:8px">
         <label>Selected track colour</label>
         <div class="color-row">
           <input type="color" id="track-color-picker" value="#00d4aa" onchange="applyTrackColor(this.value)">
@@ -463,6 +470,9 @@
           <button class="btn" onclick="applyTrackColorFromText()">Set</button>
         </div>
         <div class="swatch-row" id="track-color-swatches"></div>
+      </div>
+      <div class="field">
+        <button class="btn danger full" onclick="deleteTrack()">🗑 Delete selected track(s)</button>
       </div>
     </div>
 
@@ -480,6 +490,43 @@
       <div class="section-heading">Actions</div>
 
       <div class="field">
+        <button class="btn full" id="merge-btn" onclick="toggleMergeMode()">🔗 Merge: Select 2 tracks</button>
+      </div>
+
+      <div class="field">
+        <button class="btn full" id="swap-btn" onclick="toggleSwapMode()">⇄ Swap: Select 2 tracks</button>
+      </div>
+
+      <div class="field">
+        <label>Split at frame</label>
+        <div style="display:flex;gap:4px">
+          <input type="number" id="split-frame" placeholder="frame #">
+          <button class="btn warn" onclick="splitTrack()">✂</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>Frame-based operations</label>
+        <div class="coord-grid" style="margin-bottom:6px">
+          <input type="number" id="frame-action-start" placeholder="start frame">
+          <input type="number" id="frame-action-end" placeholder="end frame">
+        </div>
+        <div class="field" style="margin-bottom:6px">
+          <label>Apply to</label>
+          <select id="frame-action-apply-to" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:6px 10px;border-radius:6px;outline:none;">
+            <option value="selected">Selected track(s)</option>
+            <option value="all">All tracks</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn danger full" onclick="deleteFrameRange()">Delete coordinates for frames</button>
+          <button class="btn full" onclick="interpolateManual()">Interpolate (manual)</button>
+        </div>
+        <div class="subtle-note" style="margin-top:6px">
+          'Delete' removes coordinates inside the frame range, inclusive, and deletes tracks that end up empty. 'Interpolate' fills in coordinates inside the frame range, non-inclusive, and overwrites existing coordinates.  
+        </div>
+      </div>
+
+      <div class="field">
         <label>Edit point at current frame</label>
         <div class="coord-grid" style="margin-bottom:6px">
           <input type="number" id="point-x" step="any" placeholder="X">
@@ -495,65 +542,7 @@
       </div>
 
       <div class="field">
-        <label>Rename selected track</label>
-        <div style="display:flex;gap:4px">
-          <input type="text" id="rename-input" placeholder="new_id e.g. dor_001">
-          <button class="btn" onclick="renameTrack()">✓</button>
-        </div>
-      </div>
-      <div class="field">
-        <button class="btn full" id="merge-btn" onclick="toggleMergeMode()">🔗 Merge: Select 2 tracks</button>
-      </div>
-
-      <div class="field">
-        <button class="btn full" id="swap-btn" onclick="toggleSwapMode()">⇄ Swap: Select 2 tracks</button>
-      </div>
-
-      <div class="field">
-        <label>Split at frame</label>
-        <div style="display:flex;gap:4px">
-          <input type="number" id="split-frame" placeholder="frame #">
-          <button class="btn warn" onclick="splitTrack()">✂</button>
-        </div>
-      </div>
-
-      <div class="field">
-        <button class="btn danger full" onclick="deleteTrack()">🗑 Delete selected track(s)</button>
-      </div>
-
-      <div class="field">
         <button class="btn danger full" onclick="deletePoint()">✕ Delete point(s) in this frame</button>
-      </div>
-
-      <div class="field">
-        <label>Delete all tracks in frame range</label>
-        <div class="coord-grid" style="margin-bottom:6px">
-          <input type="number" id="range-delete-start" placeholder="start frame">
-          <input type="number" id="range-delete-end" placeholder="end frame">
-        </div>
-        <button class="btn danger full" onclick="deleteFrameRange()">Delete coordinates for frames</button>
-        <div class="subtle-note" style="margin-top:6px">
-          Removes coordinates only between the two frames, inclusive. Tracks with no points left afterward are removed automatically.
-        </div>
-      </div>
-
-      <div class="field">
-        <label>Manual interpolation</label>
-        <div class="coord-grid" style="margin-bottom:6px">
-          <input type="number" id="manual-interp-start" placeholder="start frame">
-          <input type="number" id="manual-interp-end" placeholder="end frame">
-        </div>
-        <div class="field" style="margin-bottom:6px">
-          <label>Apply to</label>
-          <select id="manual-interp-apply-to" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:6px 10px;border-radius:6px;outline:none;">
-            <option value="selected">Selected track(s)</option>
-            <option value="all">All tracks</option>
-          </select>
-        </div>
-        <button class="btn full" onclick="interpolateManual()">Interpolate (manual)</button>
-        <div class="subtle-note" style="margin-top:6px">
-          Ctrl/Cmd-click in either panel to multi-select tracks. Shift-click selects the visible range only in the Tracks panel.
-        </div>
       </div>
     </div>
 
@@ -974,6 +963,27 @@ function getSelectedTrackIdsForBulkActions() {
   return selectedTrack ? [selectedTrack] : [];
 }
 
+function getSharedFrameActionInputs() {
+  let startFrame = parseInt(document.getElementById('frame-action-start').value, 10);
+  let endFrame = parseInt(document.getElementById('frame-action-end').value, 10);
+
+  if (Number.isNaN(startFrame) || Number.isNaN(endFrame)) {
+    setStatus('Enter both start and end frames', 'err');
+    return null;
+  }
+
+  if (startFrame > endFrame) {
+    [startFrame, endFrame] = [endFrame, startFrame];
+  }
+
+  const applyTo = document.getElementById('frame-action-apply-to').value;
+  const targetTrackIds = applyTo === 'all'
+    ? Object.keys(trackMap).sort()
+    : getSelectedTrackIdsForBulkActions();
+
+  return { startFrame, endFrame, applyTo, targetTrackIds };
+}
+
 function getFrameTimestampColumn() {
   return sourceColumnOrder.find(col => ['frame_timestamp', 'FrameTimestamp', 'timestamp'].includes(col)) || null;
 }
@@ -1013,6 +1023,45 @@ function createBlankInterpolatedPoint(startPoint, frameNum, x, y, frameTimestamp
 
   record.is_imputed = 'interpolated';
   record.correction_flag = 'interpolated';
+  return record;
+}
+
+function createPointRecordForTrack(trackId, frameNum, x, y) {
+  const points = trackMap[trackId] || [];
+  if (points.length === 0) return null;
+
+  let templatePoint = points[0];
+  points.forEach(point => {
+    if (Math.abs(point.frame_number - frameNum) < Math.abs(templatePoint.frame_number - frameNum)) {
+      templatePoint = point;
+    }
+  });
+
+  const record = {};
+  sourceColumnOrder.forEach(col => { record[col] = ''; });
+
+  setCanonicalField(record, 'frame_number', frameNum);
+  setCanonicalField(record, 'X', x);
+  setCanonicalField(record, 'Y', y);
+  setCanonicalField(record, 'global_id', trackId);
+
+  const trackName = Object.prototype.hasOwnProperty.call(templatePoint, 'name')
+    ? templatePoint.name
+    : '';
+  record.name = trackName ?? '';
+
+  const timestampColumn = getFrameTimestampColumn();
+  const frameTimestamp = getTimestampForFrame(frameNum);
+  const timestampValue = Number.isFinite(frameTimestamp) ? frameTimestamp : '';
+  if (timestampColumn) {
+    record[timestampColumn] = timestampValue;
+  }
+  record.frame_timestamp = timestampValue;
+
+  if (Object.prototype.hasOwnProperty.call(record, 'is_imputed') || Object.prototype.hasOwnProperty.call(templatePoint, 'is_imputed')) {
+    record.is_imputed = 'manually_added';
+  }
+
   return record;
 }
 
@@ -1554,14 +1603,10 @@ function updateFrameInfo() {
   document.getElementById('frame-info').textContent =
     `Frame: ${currentFrame}  (${pts.length} pts)${videoFrameText}`;
   document.getElementById('split-frame').value = currentFrame;
-  const rangeStart = document.getElementById('range-delete-start');
-  const rangeEnd = document.getElementById('range-delete-end');
-  const interpStart = document.getElementById('manual-interp-start');
-  const interpEnd = document.getElementById('manual-interp-end');
-  if (!rangeStart.value) rangeStart.value = currentFrame;
-  if (!rangeEnd.value) rangeEnd.value = currentFrame;
-  if (!interpStart.value) interpStart.value = currentFrame;
-  if (!interpEnd.value) interpEnd.value = currentFrame;
+  const frameActionStart = document.getElementById('frame-action-start');
+  const frameActionEnd = document.getElementById('frame-action-end');
+  if (!frameActionStart.value) frameActionStart.value = currentFrame;
+  if (!frameActionEnd.value) frameActionEnd.value = currentFrame;
   updateSelectedInfo();
 }
 
@@ -1687,7 +1732,7 @@ function updateSelectedInfo() {
     pointY.value = '';
     colorPicker.value = '#00d4aa';
     colorText.value = '';
-    note.textContent = 'Select a track, then drag its current-frame point on the canvas or enter X/Y manually.';
+    note.textContent = 'Select a track, then drag its current-frame point, right-click to add one at this frame, or enter X/Y manually.';
     return;
   }
   const pts = trackMap[selectedTrack];
@@ -1716,7 +1761,7 @@ function updateSelectedInfo() {
   } else {
     pointX.value = '';
     pointY.value = '';
-    note.textContent = 'This track has no point at the current frame. Move to a frame where the track exists to edit coordinates.';
+    note.textContent = 'This track has no point at the current frame. Right-click the image panel to add one here, or enter X/Y and press Apply XY.';
   }
 }
 
@@ -1997,62 +2042,69 @@ function deletePoint() {
 
 function deleteFrameRange() {
   if (allData.length === 0) { setStatus('Load data first', 'err'); return; }
-  let startFrame = parseInt(document.getElementById('range-delete-start').value, 10);
-  let endFrame = parseInt(document.getElementById('range-delete-end').value, 10);
-
-  if (Number.isNaN(startFrame) || Number.isNaN(endFrame)) {
-    setStatus('Enter both start and end frames', 'err');
+  const sharedInputs = getSharedFrameActionInputs();
+  if (!sharedInputs) {
     return;
   }
 
-  if (startFrame > endFrame) {
-    [startFrame, endFrame] = [endFrame, startFrame];
+  const { startFrame, endFrame, applyTo, targetTrackIds } = sharedInputs;
+  if (targetTrackIds.length === 0) {
+    setStatus(applyTo === 'all' ? 'No tracks available' : 'Select at least one track first', 'err');
+    return;
   }
 
-  const pointsToDelete = allData.filter(d => d.frame_number >= startFrame && d.frame_number <= endFrame);
+  const targetTrackSet = new Set(targetTrackIds);
+  const pointsToDelete = allData.filter(d =>
+    targetTrackSet.has(d.global_id) &&
+    d.frame_number >= startFrame &&
+    d.frame_number <= endFrame
+  );
   if (pointsToDelete.length === 0) {
     setStatus(`No coordinates found between frames ${startFrame} and ${endFrame}`, 'err');
     return;
   }
 
-  if (!confirm(`Delete ${pointsToDelete.length} coordinates across all tracks for frames ${startFrame} to ${endFrame}?`)) {
+  const scopeLabel = applyTo === 'all'
+    ? 'all tracks'
+    : `${targetTrackIds.length} selected track${targetTrackIds.length === 1 ? '' : 's'}`;
+  if (!confirm(`Delete ${pointsToDelete.length} coordinates across ${scopeLabel} for frames ${startFrame} to ${endFrame}?`)) {
     return;
   }
 
   pushUndo();
-  allData = allData.filter(d => d.frame_number < startFrame || d.frame_number > endFrame);
+  allData = allData.filter(d =>
+    !targetTrackSet.has(d.global_id) ||
+    d.frame_number < startFrame ||
+    d.frame_number > endFrame
+  );
+
+  const remainingTrackSet = new Set(allData.map(d => d.global_id));
+  const deletedTrackCount = targetTrackIds.filter(id => !remainingTrackSet.has(id)).length;
 
   rebuildIndices();
   renderTrackList();
   updateSelectedInfo();
   redraw();
   markDraftDirty();
-  setStatus(`Deleted ${pointsToDelete.length} coordinates for frames ${startFrame} to ${endFrame}`, 'ok');
+  const trackCleanupMessage = deletedTrackCount > 0
+    ? `. Removed ${deletedTrackCount} empty track${deletedTrackCount === 1 ? '' : 's'}.`
+    : '';
+  setStatus(`Deleted ${pointsToDelete.length} coordinates for frames ${startFrame} to ${endFrame}${trackCleanupMessage}`, 'ok');
 }
 
 function interpolateManual() {
   if (allData.length === 0) { setStatus('Load data first', 'err'); return; }
-
-  let startFrame = parseInt(document.getElementById('manual-interp-start').value, 10);
-  let endFrame = parseInt(document.getElementById('manual-interp-end').value, 10);
-  if (Number.isNaN(startFrame) || Number.isNaN(endFrame)) {
-    setStatus('Enter both start and end frames for interpolation', 'err');
+  const sharedInputs = getSharedFrameActionInputs();
+  if (!sharedInputs) {
     return;
   }
+
+  const { startFrame, endFrame, applyTo, targetTrackIds } = sharedInputs;
 
   if (startFrame === endFrame) {
     setStatus('Choose different start and end frames', 'err');
     return;
   }
-
-  if (startFrame > endFrame) {
-    [startFrame, endFrame] = [endFrame, startFrame];
-  }
-
-  const applyTo = document.getElementById('manual-interp-apply-to').value;
-  const targetTrackIds = applyTo === 'all'
-    ? Object.keys(trackMap).sort()
-    : getSelectedTrackIdsForBulkActions();
 
   if (targetTrackIds.length === 0) {
     setStatus(applyTo === 'all' ? 'No tracks available' : 'Select at least one track first', 'err');
@@ -2121,25 +2173,61 @@ function updatePointCoordinates(point, x, y, flag = 'edited') {
   point[yCol] = y;
 }
 
-function savePointEdit() {
-  if (!selectedTrack) { setStatus('Select a track first', 'err'); return; }
-  const point = getPointForTrackAtFrame(selectedTrack, currentFrame);
-  if (!point) { setStatus('No selected-track point exists at this frame', 'err'); return; }
+function applyPointCoordinatesAtCurrentFrame(x, y, options = {}) {
+  const {
+    createOnly = false,
+    updateFlag = 'edited',
+    createStatus = `Added "${selectedTrack}" at frame ${currentFrame}`,
+    updateStatus = `Updated "${selectedTrack}" at frame ${currentFrame}`,
+    duplicateMessage = `Track "${selectedTrack}" already has a point at frame ${currentFrame}`,
+  } = options;
 
-  const x = parseFloat(document.getElementById('point-x').value);
-  const y = parseFloat(document.getElementById('point-y').value);
+  if (!selectedTrack) {
+    setStatus('Select a track first', 'err');
+    return false;
+  }
+
   if (!Number.isFinite(x) || !Number.isFinite(y)) {
     setStatus('Enter valid numeric X and Y values', 'err');
-    return;
+    return false;
+  }
+
+  const existingPoint = getPointForTrackAtFrame(selectedTrack, currentFrame);
+  if (existingPoint) {
+    if (createOnly) {
+      setStatus(duplicateMessage, 'err');
+      return false;
+    }
+    pushUndo();
+    updatePointCoordinates(existingPoint, x, y, updateFlag);
+    rebuildIndices();
+    updateSelectedInfo();
+    drawTracks();
+    markDraftDirty();
+    setStatus(updateStatus, 'ok');
+    return true;
+  }
+
+  const newPoint = createPointRecordForTrack(selectedTrack, currentFrame, x, y);
+  if (!newPoint) {
+    setStatus('Selected track has no source points to clone', 'err');
+    return false;
   }
 
   pushUndo();
-  updatePointCoordinates(point, x, y);
+  allData.push(newPoint);
   rebuildIndices();
   updateSelectedInfo();
   drawTracks();
   markDraftDirty();
-  setStatus(`Updated "${selectedTrack}" at frame ${currentFrame}`, 'ok');
+  setStatus(createStatus, 'ok');
+  return true;
+}
+
+function savePointEdit() {
+  const x = parseFloat(document.getElementById('point-x').value);
+  const y = parseFloat(document.getElementById('point-y').value);
+  applyPointCoordinatesAtCurrentFrame(x, y);
 }
 
 function jumpToSelectedPoint() {
@@ -2198,6 +2286,7 @@ function pointNearCursor(mx, my, frameWindow = 5, threshold = 20, trackId = null
 }
 
 trackCanvas.addEventListener('mousedown', function(e) {
+  if (e.button !== 0) return;
   if (!selectedTrack || allData.length === 0) return;
   const rect = this.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -2238,6 +2327,29 @@ trackCanvas.addEventListener('click', function(e) {
   const my = e.clientY - rect.top;
   const best = pointNearCursor(mx, my);
   if (best) selectTrack(best.global_id, e, 'canvas');
+});
+
+trackCanvas.addEventListener('contextmenu', function(e) {
+  if (allData.length === 0) return;
+  e.preventDefault();
+  if (!selectedTrack) {
+    setStatus('Select a track first', 'err');
+    return;
+  }
+
+  const rect = this.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const [x, y] = canvasToData(mx, my);
+
+  document.getElementById('point-x').value = Number(x).toFixed(3);
+  document.getElementById('point-y').value = Number(y).toFixed(3);
+
+  applyPointCoordinatesAtCurrentFrame(x, y, {
+    createOnly: true,
+    createStatus: `Added "${selectedTrack}" at frame ${currentFrame} from right-click`,
+    duplicateMessage: `Track "${selectedTrack}" already has a point at frame ${currentFrame}; right-click only adds missing points`,
+  });
 });
 
 // Tooltip — uses frameIndex for O(1) lookup
