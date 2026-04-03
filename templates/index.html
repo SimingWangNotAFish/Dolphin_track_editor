@@ -412,7 +412,7 @@
       <div class="section-heading">Display</div>
       <div class="field">
         <label>Trail length (frames)</label>
-        <input type="number" id="trail-length" value="30" min="1" max="200" oninput="redraw(); markDraftDirty(600)">
+        <input type="number" id="trail-length" value="30" min="0" max="200" oninput="redraw(); markDraftDirty(600)">
       </div>
       <div class="field">
         <label>Future trajectory length (frames)</label>
@@ -444,7 +444,7 @@
         <input type="number" id="video-offset-input" value="0" step="1" onchange="applyVideoSyncSettings()">
       </div>
       <div class="subtle-note" style="margin-top:6px">
-        Default sync uses the CSV `frame_number` as the actual video frame index. If your CSV includes `frame_timestamp`, you can switch to that instead.
+        You can sync using CSV `frame_number` or 'frame_timestamp' as the actual video frame index.
       </div>
     </div>
 
@@ -536,6 +536,25 @@
           Removes coordinates only between the two frames, inclusive. Tracks with no points left afterward are removed automatically.
         </div>
       </div>
+
+      <div class="field">
+        <label>Manual interpolation</label>
+        <div class="coord-grid" style="margin-bottom:6px">
+          <input type="number" id="manual-interp-start" placeholder="start frame">
+          <input type="number" id="manual-interp-end" placeholder="end frame">
+        </div>
+        <div class="field" style="margin-bottom:6px">
+          <label>Apply to</label>
+          <select id="manual-interp-apply-to" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:6px 10px;border-radius:6px;outline:none;">
+            <option value="selected">Selected track(s)</option>
+            <option value="all">All tracks</option>
+          </select>
+        </div>
+        <button class="btn full" onclick="interpolateManual()">Interpolate (manual)</button>
+        <div class="subtle-note" style="margin-top:6px">
+          Ctrl/Cmd-click to multi-select tracks. Shift-click selects the visible range between two clicked tracks.
+        </div>
+      </div>
     </div>
 
     <hr class="divider">
@@ -567,6 +586,7 @@ let resolvedColumns = {};
 
 // Derived index: global_id -> sorted array of points (rebuilt after each edit)
 let trackMap = {};
+let trackCategoryMap = {};
 
 // Precomputed per-frame index: frame_number -> array of points (rebuilt after edits)
 let frameIndex = {};
@@ -590,6 +610,8 @@ let mergeSource = null;
 let swapMode = false;
 let swapFirst = null;
 let filterMode = 'all';
+let selectedTracks = [];
+let lastTrackSelectionAnchor = null;
 
 // Frame state
 let currentFrame = 0;
@@ -696,6 +718,7 @@ function buildDraftPayload() {
     resolvedColumns,
     trackColors,
     selectedTrack,
+    selectedTracks,
     currentFrame,
     filterMode,
     ui: {
@@ -719,14 +742,15 @@ function applyDraftPayload(draft) {
   resolvedColumns = draft.resolvedColumns || {};
   trackColors = draft.trackColors || {};
   selectedTrack = draft.selectedTrack || null;
+  selectedTracks = Array.isArray(draft.selectedTracks) ? draft.selectedTracks : (selectedTrack ? [selectedTrack] : []);
   currentFrame = Number.isFinite(draft.currentFrame) ? draft.currentFrame : 0;
   filterMode = draft.filterMode || 'all';
   loadedCsvName = draft.csvName || '';
   loadedVideoName = draft.videoName || '';
 
   const ui = draft.ui || {};
-  document.getElementById('trail-length').value = ui.trailLength || 30;
-  document.getElementById('future-length').value = ui.futureLength || 0;
+  document.getElementById('trail-length').value = ui.trailLength ?? 30;
+  document.getElementById('future-length').value = ui.futureLength ?? 0;
   document.getElementById('show-labels').checked = ui.showLabels !== false;
   document.getElementById('show-all-frames').checked = !!ui.showAllFrames;
   document.getElementById('video-fps-input').value = ui.videoFPS || 60;
@@ -848,6 +872,7 @@ async function restoreDraftIfAvailable() {
 
 function rebuildIndices() {
   trackMap = {};
+  trackCategoryMap = {};
   frameIndex = {};
   timestampByFrame = {};
   timestampFrames = [];
@@ -879,6 +904,10 @@ function rebuildIndices() {
     trackMap[id].sort((a, b) => a.frame_number - b.frame_number);
   });
 
+  Object.keys(trackMap).forEach(id => {
+    trackCategoryMap[id] = inferTrackCategory(trackMap[id]);
+  });
+
   timestampFrames = Object.keys(timestampByFrame)
     .map(Number)
     .sort((a, b) => a - b);
@@ -896,6 +925,95 @@ function rebuildIndices() {
     frameMin = 0;
     frameMax = 0;
   }
+
+  syncSelectionState();
+}
+
+function getSortedTrackIds(mode = filterMode) {
+  return Object.keys(trackMap)
+    .filter(id => mode === 'all' || getTrackCategory(id) === mode)
+    .sort();
+}
+
+function syncSelectionState() {
+  const validIds = new Set(Object.keys(trackMap));
+  selectedTracks = [...new Set((selectedTracks || []).filter(id => validIds.has(id)))];
+  if (selectedTrack && !validIds.has(selectedTrack)) {
+    selectedTrack = null;
+  }
+  if (selectedTrack && !selectedTracks.includes(selectedTrack)) {
+    selectedTracks.unshift(selectedTrack);
+  }
+  if (!selectedTrack && selectedTracks.length > 0) {
+    selectedTrack = selectedTracks[0];
+  }
+  if (!selectedTrack) {
+    selectedTracks = [];
+  }
+  if (lastTrackSelectionAnchor && !validIds.has(lastTrackSelectionAnchor)) {
+    lastTrackSelectionAnchor = selectedTrack;
+  }
+}
+
+function setSelection(trackIds, primaryId = null, anchorId = null) {
+  const validIds = new Set(Object.keys(trackMap));
+  selectedTracks = [...new Set((trackIds || []).filter(id => validIds.has(id)))];
+  selectedTrack = primaryId && validIds.has(primaryId)
+    ? primaryId
+    : (selectedTracks[0] || null);
+  if (selectedTrack && !selectedTracks.includes(selectedTrack)) {
+    selectedTracks.unshift(selectedTrack);
+  }
+  lastTrackSelectionAnchor = anchorId && validIds.has(anchorId)
+    ? anchorId
+    : selectedTrack;
+}
+
+function getSelectedTrackIdsForBulkActions() {
+  if (selectedTracks.length > 0) return [...selectedTracks];
+  return selectedTrack ? [selectedTrack] : [];
+}
+
+function getFrameTimestampColumn() {
+  return sourceColumnOrder.find(col => ['frame_timestamp', 'FrameTimestamp', 'timestamp'].includes(col)) || null;
+}
+
+function getTrackPointAtFrame(trackId, frameNum) {
+  return (trackMap[trackId] || []).find(point => point.frame_number === frameNum) || null;
+}
+
+function setCanonicalField(record, canonicalKey, value) {
+  record[canonicalKey] = value;
+  const resolvedColumn = resolvedColumns[canonicalKey];
+  if (resolvedColumn && resolvedColumn !== canonicalKey) {
+    record[resolvedColumn] = value;
+  }
+}
+
+function createBlankInterpolatedPoint(startPoint, frameNum, x, y, frameTimestamp) {
+  const record = {};
+  sourceColumnOrder.forEach(col => { record[col] = ''; });
+
+  setCanonicalField(record, 'frame_number', frameNum);
+  setCanonicalField(record, 'X', x);
+  setCanonicalField(record, 'Y', y);
+  setCanonicalField(record, 'global_id', startPoint.global_id);
+
+  if (Object.prototype.hasOwnProperty.call(startPoint, 'name')) {
+    record.name = startPoint.name;
+  }
+
+  const timestampColumn = getFrameTimestampColumn();
+  if (timestampColumn && Number.isFinite(frameTimestamp)) {
+    record[timestampColumn] = frameTimestamp;
+    if (timestampColumn !== 'frame_timestamp') {
+      record.frame_timestamp = frameTimestamp;
+    }
+  }
+
+  record.is_imputed = 'interpolated';
+  record.correction_flag = 'interpolated';
+  return record;
 }
 
 function getRecordTimestamp(record) {
@@ -903,6 +1021,26 @@ function getRecordTimestamp(record) {
   if (raw === null || raw === undefined || raw === '') return null;
   const value = parseFloat(raw);
   return Number.isFinite(value) ? value : null;
+}
+
+function normalizeTrackCategory(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'ros' || normalized === 'dor') return normalized;
+  return 'unknown';
+}
+
+function inferTrackCategory(points) {
+  const categories = new Set(
+    (points || [])
+      .map(point => normalizeTrackCategory(point.name))
+      .filter(category => category !== 'unknown')
+  );
+  if (categories.size === 1) return [...categories][0];
+  return 'unknown';
+}
+
+function getTrackCategory(trackId) {
+  return trackCategoryMap[trackId] || 'unknown';
 }
 
 function getNavigationBounds() {
@@ -1279,8 +1417,10 @@ function drawTracks() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (allData.length === 0) return;
 
-  const trailLen = parseInt(document.getElementById('trail-length').value) || 30;
-  const futureLen = Math.max(0, parseInt(document.getElementById('future-length').value) || 0);
+  const trailLenValue = parseInt(document.getElementById('trail-length').value, 10);
+  const futureLenValue = parseInt(document.getElementById('future-length').value, 10);
+  const trailLen = Number.isFinite(trailLenValue) ? Math.max(0, trailLenValue) : 30;
+  const futureLen = Number.isFinite(futureLenValue) ? Math.max(0, futureLenValue) : 0;
   const showLabels = document.getElementById('show-labels').checked;
   const showAll = document.getElementById('show-all-frames').checked;
 
@@ -1414,8 +1554,12 @@ function updateFrameInfo() {
   document.getElementById('split-frame').value = currentFrame;
   const rangeStart = document.getElementById('range-delete-start');
   const rangeEnd = document.getElementById('range-delete-end');
+  const interpStart = document.getElementById('manual-interp-start');
+  const interpEnd = document.getElementById('manual-interp-end');
   if (!rangeStart.value) rangeStart.value = currentFrame;
   if (!rangeEnd.value) rangeEnd.value = currentFrame;
+  if (!interpStart.value) interpStart.value = currentFrame;
+  if (!interpEnd.value) interpEnd.value = currentFrame;
   updateSelectedInfo();
 }
 
@@ -1431,9 +1575,7 @@ function filterTracks(mode) {
 
 function renderTrackList() {
   const list = document.getElementById('track-list');
-  const ids = Object.keys(trackMap)
-    .filter(id => filterMode === 'all' || id.toLowerCase().includes(filterMode))
-    .sort();
+  const ids = getSortedTrackIds();
 
   document.getElementById('track-count-badge').textContent = `(${ids.length})`;
 
@@ -1444,11 +1586,12 @@ function renderTrackList() {
 
   list.innerHTML = ids.map(id => {
     const pts = trackMap[id] || [];
-    const cls = id === mergeSource ? 'selected-merge' : (id === selectedTrack ? 'selected' : '');
-    const badge = id.startsWith('ros') ? '<span class="badge ros">ros</span>'
-                : id.startsWith('dor') ? '<span class="badge dor">dor</span>'
+    const cls = id === mergeSource ? 'selected-merge' : (selectedTracks.includes(id) ? 'selected' : '');
+    const category = getTrackCategory(id);
+    const badge = category === 'ros' ? '<span class="badge ros">ros</span>'
+                : category === 'dor' ? '<span class="badge dor">dor</span>'
                 : '<span class="badge other">?</span>';
-    return `<div class="track-item ${cls}" onclick="selectTrack('${id}')">
+    return `<div class="track-item ${cls}" onclick="selectTrack('${id}', event)">
       <div class="track-dot" style="background:${trackColors[id] || '#888'}"></div>
       <span class="track-label">${id}</span>
       ${badge}
@@ -1468,11 +1611,11 @@ function renderColorSwatches() {
 // SELECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function selectTrack(id) {
+function selectTrack(id, event = null) {
   if (swapMode) {
     if (!swapFirst) {
       swapFirst = id;
-      selectedTrack = id;
+      setSelection([id], id, id);
       setStatus(`Swap: "${id}" selected. Now click the second track.`, 'info');
       renderTrackList();
       updateSelectedInfo();
@@ -1485,7 +1628,7 @@ function selectTrack(id) {
   if (mergeMode) {
     if (!mergeSource) {
       mergeSource = id;
-      selectedTrack = id;
+      setSelection([id], id, id);
       setStatus(`Merge: "${id}" selected as source. Now click the target.`, 'info');
       renderTrackList();
     } else if (id !== mergeSource) {
@@ -1493,7 +1636,36 @@ function selectTrack(id) {
     }
     return;
   }
-  selectedTrack = id;
+
+  const isRangeSelect = !!event?.shiftKey && !!lastTrackSelectionAnchor;
+  const isToggleSelect = !!event?.ctrlKey || !!event?.metaKey;
+  if (isRangeSelect) {
+    const ids = getSortedTrackIds();
+    const startIdx = ids.indexOf(lastTrackSelectionAnchor);
+    const endIdx = ids.indexOf(id);
+    if (startIdx !== -1 && endIdx !== -1) {
+      const [from, to] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
+      const rangeSelection = ids.slice(from, to + 1);
+      const nextSelection = isToggleSelect
+        ? [...new Set([...selectedTracks, ...rangeSelection])]
+        : rangeSelection;
+      setSelection(nextSelection, id, lastTrackSelectionAnchor);
+    } else {
+      setSelection([id], id, id);
+    }
+  } else if (isToggleSelect) {
+    const nextSelection = selectedTracks.includes(id)
+      ? selectedTracks.filter(trackId => trackId !== id)
+      : [...selectedTracks, id];
+    setSelection(
+      nextSelection,
+      nextSelection.includes(id) ? id : (nextSelection[nextSelection.length - 1] || null),
+      id
+    );
+  } else {
+    setSelection([id], id, id);
+  }
+
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
@@ -1521,8 +1693,12 @@ function updateSelectedInfo() {
   const fmin = Math.min(...frames), fmax = Math.max(...frames);
   const currentPoint = getPointForTrackAtFrame(selectedTrack, currentFrame);
   const currentColor = trackColors[selectedTrack] || '#00d4aa';
+  const multiSelectLabel = selectedTracks.length > 1
+    ? `<div class="detail">${selectedTracks.length} tracks selected. Primary track: "${selectedTrack}".</div>`
+    : '';
   el.innerHTML = `
     <div class="track-id" style="color:${trackColors[selectedTrack]}">${selectedTrack}</div>
+    ${multiSelectLabel}
     <div class="detail">${pts.length} points</div>
     <div class="detail">Frames ${fmin} – ${fmax}</div>
     <div class="detail">${currentPoint ? `Current point: (${Number(currentPoint.X).toFixed(2)}, ${Number(currentPoint.Y).toFixed(2)})` : 'No point at current frame'}</div>
@@ -1590,7 +1766,7 @@ function renameTrack() {
   });
 
   const old = selectedTrack;
-  selectedTrack = newId;
+  setSelection(selectedTracks.map(id => id === old ? newId : id), newId, newId);
   rebuildIndices();
   renderTrackList();
   updateSelectedInfo();
@@ -1693,7 +1869,7 @@ function executeMerge(sourceId, targetId) {
   });
 
   mergeMode = false; mergeSource = null;
-  selectedTrack = targetId;
+  setSelection([targetId], targetId, targetId);
   document.getElementById('merge-btn').classList.remove('merge-active');
   document.getElementById('merge-btn').textContent = '🔗 Merge: Select 2 tracks';
   document.getElementById('merge-banner').classList.remove('visible');
@@ -1722,7 +1898,7 @@ function executeSwap(firstId, secondId) {
 
   swapMode = false;
   swapFirst = null;
-  selectedTrack = firstId;
+  setSelection([firstId], firstId, firstId);
   document.getElementById('swap-btn').classList.remove('merge-active');
   document.getElementById('swap-btn').textContent = '⇄ Swap: Select 2 tracks';
   document.getElementById('swap-banner').classList.remove('visible');
@@ -1764,8 +1940,8 @@ function splitTrack() {
   });
 
   rebuildIndices();
+  setSelection([currentFrame >= splitFrame ? newId : originalId], currentFrame >= splitFrame ? newId : originalId, currentFrame >= splitFrame ? newId : originalId);
   renderTrackList();
-  selectedTrack = currentFrame >= splitFrame ? newId : selectedTrack;
   updateSelectedInfo();
   drawTracks();
   markDraftDirty();
@@ -1779,7 +1955,7 @@ function deleteTrack() {
 
   allData = allData.filter(d => d.global_id !== selectedTrack);
   const old = selectedTrack;
-  selectedTrack = null;
+  setSelection(selectedTracks.filter(id => id !== old), null, null);
 
   rebuildIndices();
   renderTrackList();
@@ -1831,14 +2007,92 @@ function deleteFrameRange() {
   allData = allData.filter(d => d.frame_number < startFrame || d.frame_number > endFrame);
 
   rebuildIndices();
-  if (selectedTrack && !trackMap[selectedTrack]) {
-    selectedTrack = null;
-  }
   renderTrackList();
   updateSelectedInfo();
   redraw();
   markDraftDirty();
   setStatus(`Deleted ${pointsToDelete.length} coordinates for frames ${startFrame} to ${endFrame}`, 'ok');
+}
+
+function interpolateManual() {
+  if (allData.length === 0) { setStatus('Load data first', 'err'); return; }
+
+  let startFrame = parseInt(document.getElementById('manual-interp-start').value, 10);
+  let endFrame = parseInt(document.getElementById('manual-interp-end').value, 10);
+  if (Number.isNaN(startFrame) || Number.isNaN(endFrame)) {
+    setStatus('Enter both start and end frames for interpolation', 'err');
+    return;
+  }
+
+  if (startFrame === endFrame) {
+    setStatus('Choose different start and end frames', 'err');
+    return;
+  }
+
+  if (startFrame > endFrame) {
+    [startFrame, endFrame] = [endFrame, startFrame];
+  }
+
+  const applyTo = document.getElementById('manual-interp-apply-to').value;
+  const targetTrackIds = applyTo === 'all'
+    ? Object.keys(trackMap).sort()
+    : getSelectedTrackIdsForBulkActions();
+
+  if (targetTrackIds.length === 0) {
+    setStatus(applyTo === 'all' ? 'No tracks available' : 'Select at least one track first', 'err');
+    return;
+  }
+
+  pushUndo();
+
+  const targetTrackSet = new Set(targetTrackIds);
+  allData = allData.filter(point =>
+    !targetTrackSet.has(point.global_id) || point.frame_number <= startFrame || point.frame_number >= endFrame
+  );
+
+  let interpolatedTracks = 0;
+  let filledFrames = 0;
+  let clearedTracks = 0;
+
+  targetTrackIds.forEach(trackId => {
+    const startPoint = getTrackPointAtFrame(trackId, startFrame);
+    const endPoint = getTrackPointAtFrame(trackId, endFrame);
+    if (!startPoint || !endPoint) {
+      clearedTracks++;
+      return;
+    }
+
+    const span = endFrame - startFrame;
+    const startTimestamp = getRecordTimestamp(startPoint);
+    const endTimestamp = getRecordTimestamp(endPoint);
+    let trackFilled = 0;
+    for (let frameNum = startFrame + 1; frameNum < endFrame; frameNum++) {
+      const ratio = (frameNum - startFrame) / span;
+      const x = startPoint.X + ((endPoint.X - startPoint.X) * ratio);
+      const y = startPoint.Y + ((endPoint.Y - startPoint.Y) * ratio);
+      const frameTimestamp = Number.isFinite(startTimestamp) && Number.isFinite(endTimestamp)
+        ? startTimestamp + ((endTimestamp - startTimestamp) * ratio)
+        : null;
+      allData.push(createBlankInterpolatedPoint(startPoint, frameNum, x, y, frameTimestamp));
+      trackFilled++;
+    }
+
+    interpolatedTracks++;
+    filledFrames += trackFilled;
+  });
+
+  rebuildIndices();
+  renderTrackList();
+  updateSelectedInfo();
+  redraw();
+  markDraftDirty();
+
+  const baseMessage = `Interpolated ${interpolatedTracks} track${interpolatedTracks === 1 ? '' : 's'}, filled ${filledFrames} frame${filledFrames === 1 ? '' : 's'}`;
+  if (clearedTracks > 0) {
+    setStatus(`${baseMessage}. Left ${clearedTracks} track span${clearedTracks === 1 ? '' : 's'} missing because an endpoint frame had no data.`, 'ok');
+  } else {
+    setStatus(baseMessage, 'ok');
+  }
 }
 
 function updatePointCoordinates(point, x, y, flag = 'edited') {

@@ -57,7 +57,10 @@ def parse_csv():
             if "is_imputed" not in rec or pd.isna(rec["is_imputed"]):
                 rec["is_imputed"] = 0
             else:
-                rec["is_imputed"] = int(rec["is_imputed"])
+                try:
+                    rec["is_imputed"] = int(rec["is_imputed"])
+                except (TypeError, ValueError):
+                    rec["is_imputed"] = str(rec["is_imputed"])
             if "correction_flag" not in rec or pd.isna(rec["correction_flag"]):
                 rec["correction_flag"] = "none"
             else:
