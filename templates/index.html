@@ -47,6 +47,15 @@
   header h1 { font-size: 1.1rem; font-weight: 800; letter-spacing: 0.05em; color: var(--accent); }
   header h1 span { color: var(--text-muted); font-weight: 400; }
   .header-actions { display: flex; gap: 8px; align-items: center; }
+  .draft-indicator {
+    font-size: 0.72rem;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text-muted);
+    padding: 0 4px;
+  }
+  .draft-indicator.ok { color: var(--success); }
+  .draft-indicator.warn { color: var(--warn); }
+  .draft-indicator.err { color: var(--danger); }
 
   .main-layout { display: flex; flex: 1; overflow: hidden; }
 
@@ -311,6 +320,8 @@
 <header>
   <h1>🐬 Dolphin Track Editor <span>/ annotation tool</span></h1>
   <div class="header-actions">
+    <span class="draft-indicator" id="draft-indicator">Drafts off</span>
+    <button class="btn" onclick="saveProgress(true)">💾 Save progress</button>
     <button class="btn" onclick="undoAction()">↩ Undo</button>
     <button class="btn primary" onclick="exportCSV()">⬇ Export CSV</button>
   </div>
@@ -354,7 +365,7 @@
       <span class="frame-info" id="frame-info">Frame: —</span>
       <div style="display:flex;gap:4px">
         <button class="btn" id="play-btn" onclick="togglePlayback()">Play</button>
-        <select id="playback-speed" onchange="setPlaybackSpeed(this.value)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:7px 10px;border-radius:6px;outline:none;">
+        <select id="playback-speed" onchange="setPlaybackSpeed(this.value); markDraftDirty(600)" style="background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:'JetBrains Mono', monospace;font-size:0.78rem;padding:7px 10px;border-radius:6px;outline:none;">
           <option value="0.1">0.1x</option>
           <option value="0.2">0.2x</option>
           <option value="0.3">0.3x</option>
@@ -401,17 +412,17 @@
       <div class="section-heading">Display</div>
       <div class="field">
         <label>Trail length (frames)</label>
-        <input type="number" id="trail-length" value="30" min="1" max="200" oninput="redraw()">
+        <input type="number" id="trail-length" value="30" min="1" max="200" oninput="redraw(); markDraftDirty(600)">
       </div>
       <div class="field">
         <label>Future trajectory length (frames)</label>
-        <input type="number" id="future-length" value="0" min="0" max="200" oninput="redraw()">
+        <input type="number" id="future-length" value="0" min="0" max="200" oninput="redraw(); markDraftDirty(600)">
       </div>
       <label class="checkbox-row">
-        <input type="checkbox" id="show-labels" checked onchange="redraw()"> Show track labels
+        <input type="checkbox" id="show-labels" checked onchange="redraw(); markDraftDirty(600)"> Show track labels
       </label><br>
       <label class="checkbox-row">
-        <input type="checkbox" id="show-all-frames" onchange="redraw()"> Show all frames
+        <input type="checkbox" id="show-all-frames" onchange="redraw(); markDraftDirty(600)"> Show all frames
       </label>
     </div>
 
@@ -609,6 +620,228 @@ let dragState = {
   suppressClick: false,
 };
 
+// Draft persistence — one same-browser autosave slot in IndexedDB
+const DRAFT_DB_NAME = 'dolphin-track-editor';
+const DRAFT_STORE_NAME = 'drafts';
+const DRAFT_KEY = 'current-session';
+const DRAFT_VERSION = 1;
+let draftDbPromise = null;
+let draftAutosaveTimer = null;
+let draftSaveInFlight = false;
+let draftSaveQueued = false;
+let draftDirty = false;
+let draftRestored = false;
+let lastSavedAt = null;
+let loadedCsvName = '';
+let loadedVideoName = '';
+
+function updateDraftIndicator(message, tone = '') {
+  const el = document.getElementById('draft-indicator');
+  if (!el) return;
+  el.textContent = message;
+  el.className = `draft-indicator${tone ? ` ${tone}` : ''}`;
+}
+
+function formatDraftTime(ts) {
+  if (!ts) return '';
+  return new Date(ts).toLocaleString();
+}
+
+function openDraftDb() {
+  if (draftDbPromise) return draftDbPromise;
+  draftDbPromise = new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const req = indexedDB.open(DRAFT_DB_NAME, DRAFT_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DRAFT_STORE_NAME)) {
+        db.createObjectStore(DRAFT_STORE_NAME);
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error || new Error('Failed to open draft storage'));
+  });
+  return draftDbPromise;
+}
+
+function withDraftStore(mode, executor) {
+  return openDraftDb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(DRAFT_STORE_NAME, mode);
+    const store = tx.objectStore(DRAFT_STORE_NAME);
+    const request = executor(store);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('Draft storage request failed'));
+  }));
+}
+
+function loadSavedDraft() {
+  return withDraftStore('readonly', store => store.get(DRAFT_KEY));
+}
+
+function writeSavedDraft(payload) {
+  return withDraftStore('readwrite', store => store.put(payload, DRAFT_KEY));
+}
+
+function buildDraftPayload() {
+  return {
+    version: DRAFT_VERSION,
+    savedAt: Date.now(),
+    csvName: loadedCsvName || '',
+    videoName: loadedVideoName || '',
+    allData,
+    sourceColumnOrder,
+    resolvedColumns,
+    trackColors,
+    selectedTrack,
+    currentFrame,
+    filterMode,
+    ui: {
+      trailLength: document.getElementById('trail-length').value,
+      futureLength: document.getElementById('future-length').value,
+      showLabels: document.getElementById('show-labels').checked,
+      showAllFrames: document.getElementById('show-all-frames').checked,
+      videoFPS: document.getElementById('video-fps-input').value,
+      videoOffset: document.getElementById('video-offset-input').value,
+      videoOffsetUserChanged: !!document.getElementById('video-offset-input').dataset.userChanged,
+      videoSyncSource: document.getElementById('video-sync-source').value,
+      playbackSpeed: document.getElementById('playback-speed').value,
+    },
+  };
+}
+
+function applyDraftPayload(draft) {
+  undoStack = [];
+  allData = Array.isArray(draft.allData) ? draft.allData : [];
+  sourceColumnOrder = Array.isArray(draft.sourceColumnOrder) ? draft.sourceColumnOrder : [];
+  resolvedColumns = draft.resolvedColumns || {};
+  trackColors = draft.trackColors || {};
+  selectedTrack = draft.selectedTrack || null;
+  currentFrame = Number.isFinite(draft.currentFrame) ? draft.currentFrame : 0;
+  filterMode = draft.filterMode || 'all';
+  loadedCsvName = draft.csvName || '';
+  loadedVideoName = draft.videoName || '';
+
+  const ui = draft.ui || {};
+  document.getElementById('trail-length').value = ui.trailLength || 30;
+  document.getElementById('future-length').value = ui.futureLength || 0;
+  document.getElementById('show-labels').checked = ui.showLabels !== false;
+  document.getElementById('show-all-frames').checked = !!ui.showAllFrames;
+  document.getElementById('video-fps-input').value = ui.videoFPS || 60;
+  document.getElementById('video-offset-input').value = ui.videoOffset || 0;
+  if (ui.videoOffsetUserChanged) {
+    document.getElementById('video-offset-input').dataset.userChanged = 'true';
+  } else {
+    delete document.getElementById('video-offset-input').dataset.userChanged;
+  }
+  document.getElementById('video-sync-source').value = ui.videoSyncSource || 'frame_number';
+  document.getElementById('playback-speed').value = ui.playbackSpeed || '1';
+
+  videoFPS = parseFloat(document.getElementById('video-fps-input').value) || 25;
+  videoFrameOffset = parseInt(document.getElementById('video-offset-input').value, 10) || 0;
+  videoSyncSource = document.getElementById('video-sync-source').value;
+
+  rebuildIndices();
+  updateFrameSliderBounds();
+  document.getElementById('empty-canvas').style.display = allData.length > 0 ? 'none' : 'flex';
+  renderTrackList();
+  updateSelectedInfo();
+  redraw();
+}
+
+function saveProgress(showStatus = false) {
+  if (allData.length === 0) {
+    if (showStatus) setStatus('Load a CSV before saving progress', 'err');
+    return Promise.resolve(false);
+  }
+  if (!window.indexedDB) {
+    updateDraftIndicator('Drafts unavailable', 'err');
+    if (showStatus) setStatus('This browser does not support IndexedDB drafts', 'err');
+    return Promise.resolve(false);
+  }
+  if (draftSaveInFlight) {
+    draftSaveQueued = true;
+    return Promise.resolve(false);
+  }
+
+  draftSaveInFlight = true;
+  const payload = buildDraftPayload();
+  return writeSavedDraft(payload)
+    .then(() => {
+      draftDirty = false;
+      lastSavedAt = payload.savedAt;
+      updateDraftIndicator(`Saved ${formatDraftTime(lastSavedAt)}`, 'ok');
+      if (showStatus) setStatus('Progress saved to this browser', 'ok');
+      return true;
+    })
+    .catch(err => {
+      updateDraftIndicator('Draft save failed', 'err');
+      if (showStatus) setStatus(`Draft save error: ${err.message}`, 'err');
+      return false;
+    })
+    .finally(() => {
+      draftSaveInFlight = false;
+      if (draftSaveQueued) {
+        draftSaveQueued = false;
+        scheduleAutosave(250);
+      }
+    });
+}
+
+function scheduleAutosave(delay = 1200) {
+  if (allData.length === 0) return;
+  draftDirty = true;
+  updateDraftIndicator('Unsaved changes', 'warn');
+  if (draftAutosaveTimer) clearTimeout(draftAutosaveTimer);
+  draftAutosaveTimer = setTimeout(() => {
+    draftAutosaveTimer = null;
+    saveProgress(false);
+  }, delay);
+}
+
+function markDraftDirty(delay = 1200) {
+  scheduleAutosave(delay);
+}
+
+async function restoreDraftIfAvailable() {
+  if (!window.indexedDB) {
+    updateDraftIndicator('Drafts unavailable', 'err');
+    return;
+  }
+
+  try {
+    updateDraftIndicator('Checking drafts');
+    const draft = await loadSavedDraft();
+    if (!draft || !Array.isArray(draft.allData) || draft.allData.length === 0) {
+      updateDraftIndicator('No saved draft');
+      return;
+    }
+
+    const savedAtLabel = formatDraftTime(draft.savedAt);
+    const csvLabel = draft.csvName ? `\nCSV: ${draft.csvName}` : '';
+    const shouldRestore = window.confirm(
+      `Resume your saved draft from ${savedAtLabel}?${csvLabel}\n\nPress OK to restore it or Cancel to start fresh.`
+    );
+    if (!shouldRestore) {
+      updateDraftIndicator(`Draft available from ${savedAtLabel}`);
+      return;
+    }
+
+    applyDraftPayload(draft);
+    draftRestored = true;
+    draftDirty = false;
+    lastSavedAt = draft.savedAt || Date.now();
+    updateDraftIndicator(`Restored ${formatDraftTime(lastSavedAt)}`, 'ok');
+    const videoNote = draft.videoName ? ` Reload video "${draft.videoName}" if you still need it.` : '';
+    setStatus(`Draft restored.${videoNote}`, 'ok');
+  } catch (err) {
+    updateDraftIndicator('Draft restore failed', 'err');
+    setStatus(`Draft restore error: ${err.message}`, 'err');
+  }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // INDEX BUILDING — called once after load or after any edit
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -695,6 +928,7 @@ function updateFrameSliderBounds() {
 function loadCSV(input) {
   const file = input.files[0];
   if (!file) return;
+  loadedCsvName = file.name || '';
   setStatus('Parsing CSV...', 'info');
   const fd = new FormData();
   fd.append('csv_file', file);
@@ -722,6 +956,7 @@ function loadCSV(input) {
       renderTrackList();
       updateSelectedInfo();
       redraw();
+      markDraftDirty(200);
       setStatus(`Loaded ${resp.n_rows} points across ${Object.keys(trackMap).length} tracks`, 'ok');
     })
     .catch(e => setStatus('Error: ' + e.message, 'err'));
@@ -734,6 +969,7 @@ function loadCSV(input) {
 function loadVideo(input) {
   const file = input.files[0];
   if (!file) return;
+  loadedVideoName = file.name || '';
   const video = document.getElementById('bg-video');
   const url = URL.createObjectURL(file);
   video.src = url;
@@ -749,6 +985,7 @@ function loadVideo(input) {
     document.getElementById('video-fps-input').value = videoFPS;
     updateFrameSliderBounds();
     seekVideoToFrame(currentFrame);
+    markDraftDirty(200);
     setStatus(`Video loaded: ${video.duration.toFixed(1)}s  ${videoNativeW}×${videoNativeH}`, 'ok');
   }, { once: true });
 
@@ -766,12 +1003,14 @@ function loadVideo(input) {
     stopPlaybackLoop();
     updatePlaybackButton();
     syncFrameFromVideo();
+    markDraftDirty(700);
     setStatus('Video paused', 'info');
   });
   video.addEventListener('ended', () => {
     stopPlaybackLoop();
     updatePlaybackButton();
     syncFrameFromVideo();
+    markDraftDirty(700);
     setStatus('Video ended', 'info');
   });
 }
@@ -907,6 +1146,7 @@ function applyVideoSyncSettings() {
     updateFrameSliderBounds();
   }
   redraw();
+  markDraftDirty(400);
   setStatus(`Video sync updated: ${videoSyncSource}, ${videoFPS.toFixed(2)} fps, offset ${videoFrameOffset}`, 'ok');
 }
 
@@ -1147,6 +1387,7 @@ function onSliderCommit(val) {
   currentFrame = parseInt(val);
   sliderDragging = false;
   redraw();
+  markDraftDirty(700);
 }
 
 function stepFrame(delta) {
@@ -1154,6 +1395,7 @@ function stepFrame(delta) {
   currentFrame = Math.max(bounds.min, Math.min(bounds.max, currentFrame + delta));
   document.getElementById('frame-slider').value = currentFrame;
   redraw();
+  markDraftDirty(700);
 }
 
 function updateFrameInfo() {
@@ -1184,6 +1426,7 @@ function updateFrameInfo() {
 function filterTracks(mode) {
   filterMode = mode;
   renderTrackList();
+  markDraftDirty(700);
 }
 
 function renderTrackList() {
@@ -1254,6 +1497,7 @@ function selectTrack(id) {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty(700);
 }
 
 function updateSelectedInfo() {
@@ -1320,6 +1564,7 @@ function undoAction() {
   renderTrackList();
   updateSelectedInfo();
   redraw();
+  markDraftDirty(200);
   setStatus('Undone', 'ok');
 }
 
@@ -1350,6 +1595,7 @@ function renameTrack() {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Renamed "${old}" → "${newId}"`, 'ok');
 }
 
@@ -1369,6 +1615,7 @@ function applyTrackColor(color) {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty(500);
   setStatus(`Updated colour for "${selectedTrack}"`, 'ok');
 }
 
@@ -1455,6 +1702,7 @@ function executeMerge(sourceId, targetId) {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Merged "${sourceId}" → "${targetId}"`, 'ok');
 }
 
@@ -1483,6 +1731,7 @@ function executeSwap(firstId, secondId) {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Swapped "${firstId}" and "${secondId}" from frame ${currentFrame} onward`, 'ok');
 }
 
@@ -1519,6 +1768,7 @@ function splitTrack() {
   selectedTrack = currentFrame >= splitFrame ? newId : selectedTrack;
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Split "${originalId}" at frame ${splitFrame} → "${newId}"`, 'ok');
 }
 
@@ -1535,6 +1785,7 @@ function deleteTrack() {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Deleted track "${old}"`, 'ok');
 }
 
@@ -1548,6 +1799,7 @@ function deletePoint() {
   renderTrackList();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Deleted point of "${selectedTrack}" at frame ${currentFrame}`, 'ok');
 }
 
@@ -1585,6 +1837,7 @@ function deleteFrameRange() {
   renderTrackList();
   updateSelectedInfo();
   redraw();
+  markDraftDirty();
   setStatus(`Deleted ${pointsToDelete.length} coordinates for frames ${startFrame} to ${endFrame}`, 'ok');
 }
 
@@ -1615,6 +1868,7 @@ function savePointEdit() {
   rebuildIndices();
   updateSelectedInfo();
   drawTracks();
+  markDraftDirty();
   setStatus(`Updated "${selectedTrack}" at frame ${currentFrame}`, 'ok');
 }
 
@@ -1694,6 +1948,7 @@ window.addEventListener('mouseup', () => {
     rebuildIndices();
     updateSelectedInfo();
     drawTracks();
+    markDraftDirty();
     setStatus(`Dragged "${selectedTrack}" point at frame ${currentFrame}`, 'ok');
     dragState.suppressClick = true;
   }
@@ -1785,6 +2040,17 @@ function setStatus(msg, type) {
 window.addEventListener('resize', () => { resizeCanvases(); redraw(); });
 resizeCanvases();
 renderColorSwatches();
+restoreDraftIfAvailable();
+
+window.addEventListener('pagehide', () => {
+  if (draftAutosaveTimer) {
+    clearTimeout(draftAutosaveTimer);
+    draftAutosaveTimer = null;
+  }
+  if (draftDirty && allData.length > 0) {
+    saveProgress(false);
+  }
+});
 </script>
 </body>
 </html>
